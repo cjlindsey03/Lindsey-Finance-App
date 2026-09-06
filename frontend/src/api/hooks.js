@@ -117,11 +117,15 @@ export function useDeleteCashflowEvent() {
   });
 }
 
-export function useG1(monthlyExtra = 0, strategy = 'snowball') {
+// monthlyExtra: pass a number to override the active Spending Plan's g1Extra
+// for this call only; omit (undefined) to let the backend default from the plan.
+export function useG1(monthlyExtra, strategy = 'snowball') {
   const api = useApi();
+  const params = new URLSearchParams({ strategy });
+  if (monthlyExtra != null) params.set('monthlyExtra', monthlyExtra);
   return useQuery({
     queryKey: ['g1', monthlyExtra, strategy],
-    queryFn: () => api(`/g1?monthlyExtra=${monthlyExtra}&strategy=${strategy}`),
+    queryFn: () => api(`/g1?${params.toString()}`),
   });
 }
 
@@ -223,6 +227,38 @@ export function useRentals(filters = {}) {
     queryKey: ['rentals', filters],
     queryFn: () => api(`/rentals${params ? `?${params}` : ''}`),
     enabled: false,
+  });
+}
+
+export function useRecurringBills() {
+  const api = useApi();
+  return useQuery({ queryKey: ['recurring-bills'], queryFn: () => api('/recurring-bills') });
+}
+
+export function useSaveRecurringBill() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ billId, ...bill }) =>
+      billId
+        ? api(`/recurring-bills/${billId}`, { method: 'PUT', body: bill })
+        : api('/recurring-bills', { method: 'POST', body: bill }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['recurring-bills'] });
+      queryClient.invalidateQueries({ queryKey: ['cashflow'] });
+    },
+  });
+}
+
+export function useDeleteRecurringBill() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (billId) => api(`/recurring-bills/${billId}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['recurring-bills'] });
+      queryClient.invalidateQueries({ queryKey: ['cashflow'] });
+    },
   });
 }
 

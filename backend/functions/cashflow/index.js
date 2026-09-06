@@ -5,6 +5,7 @@ const { ok, badRequest, noContent, parseBody } = require('../../shared/http');
 
 const CASHFLOW_EVENTS_TABLE = process.env.CASHFLOW_EVENTS_TABLE;
 const ACCOUNTS_TABLE = process.env.ACCOUNTS_TABLE;
+const RECURRING_BILLS_TABLE = process.env.RECURRING_BILLS_TABLE;
 
 // The running balance starts from the live Plaid balance of the household's
 // checking account rather than a manually entered figure.
@@ -22,17 +23,35 @@ function daysInMonth(year, month) {
 
 async function getMonth(householdId, year, month) {
   const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
-  const allEvents = await queryByPK(CASHFLOW_EVENTS_TABLE, householdId);
+  const daysThisMonth = daysInMonth(year, month);
 
-  const events = allEvents
-    .filter((e) => e.eventDate?.startsWith(monthPrefix) || e.isRecurring)
-    .map((e) => {
-      if (!e.isRecurring || e.eventDate?.startsWith(monthPrefix)) return e;
-      // Project a recurring bill into the requested month.
-      const day = String(e.recurringDayOfMonth ?? 1).padStart(2, '0');
-      return { ...e, eventDate: `${monthPrefix}-${day}` };
-    })
-    .sort((a, b) => a.eventDate.localeCompare(b.eventDate));
+  const [oneOffEvents, bills] = await Promise.all([
+    queryByPK(CASHFLOW_EVENTS_TABLE, householdId),
+    queryByPK(RECURRING_BILLS_TABLE, householdId),
+  ]);
+
+  // Recurring bills are a template (description/amount/dayOfMonth), not a
+  // dated event — project each active one onto this month's calendar.
+  const projectedBills = bills
+    .filter((b) => b.isActive !== false)
+    .map((b) => {
+      const day = String(Math.min(b.dayOfMonth ?? 1, daysThisMonth)).padStart(2, '0');
+      return {
+        eventDate: `${monthPrefix}-${day}`,
+        eventId: b.SK,
+        type: b.type,
+        description: b.description,
+        amount: b.amount,
+        accountId: null,
+        source: 'recurring',
+        isRecurring: true,
+        isPCSRelated: false,
+      };
+    });
+
+  const events = [...oneOffEvents.filter((e) => e.eventDate?.startsWith(monthPrefix)), ...projectedBills].sort(
+    (a, b) => a.eventDate.localeCompare(b.eventDate)
+  );
 
   const startingBalance = await getStartingBalance(householdId);
   const dailyRunningBalance = {};
@@ -76,9 +95,9 @@ async function createEvent(householdId, body) {
     description: body.description ?? '',
     amount: body.amount,
     accountId: body.accountId ?? null,
+    // Manual events are always one-off — recurring items live in
+    // recurring_bills and are managed on the Recurring Bills page instead.
     source: 'manual',
-    isRecurring: body.isRecurring ?? false,
-    recurringDayOfMonth: body.recurringDayOfMonth ?? null,
     isPCSRelated: body.isPCSRelated ?? false,
   };
   await put(CASHFLOW_EVENTS_TABLE, event);

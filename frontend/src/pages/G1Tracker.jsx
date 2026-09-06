@@ -1,13 +1,13 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import BlueprintCard from '../components/BlueprintCard.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import { useG1 } from '../api/hooks.js';
 import { money, percent } from '../utils/format.js';
 
 export default function G1Tracker() {
-  const [monthlyExtra, setMonthlyExtra] = useState(0);
   const [strategy, setStrategy] = useState('snowball');
-  const { data, isLoading } = useG1(monthlyExtra, strategy);
+  const { data, isLoading } = useG1(undefined, strategy);
 
   const payoffByAccount = Object.fromEntries(
     (data?.projection?.schedule ?? []).map((s) => [s.accountId, s.paidOffMonth])
@@ -45,15 +45,17 @@ export default function G1Tracker() {
         <div className="card-title">Payoff Plan</div>
         <div style={{ display: 'flex', gap: 'var(--space-4)', alignItems: 'flex-end', flexWrap: 'wrap' }}>
           <div className="field" style={{ maxWidth: 220 }}>
-            <label htmlFor="monthlyExtra">Monthly extra payment</label>
-            <input
-              id="monthlyExtra"
-              className="input"
-              type="number"
-              min="0"
-              value={monthlyExtra}
-              onChange={(e) => setMonthlyExtra(Number(e.target.value) || 0)}
-            />
+            <label>Monthly extra payment</label>
+            <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 22 }}>
+              {money(data?.monthlyExtra)}
+            </div>
+            <div className="text-muted" style={{ fontSize: 11 }}>
+              {data?.monthlyExtraSource === 'plan' ? (
+                <>From the {data.activePlanPayDate} Spending Plan — <Link to="/spending-plans">edit it there</Link></>
+              ) : (
+                <>No Spending Plan yet — <Link to="/spending-plans">create one</Link> to set this</>
+              )}
+            </div>
           </div>
           <div className="field">
             <label>Strategy</label>

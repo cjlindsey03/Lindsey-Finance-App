@@ -51,6 +51,7 @@ Globals:
         G2_TABLE: !Ref G2Table
         G3_TABLE: !Ref G3Table
         RENTALS_CACHE_TABLE: !Ref RentalsCacheTable
+        RECURRING_BILLS_TABLE: !Ref RecurringBillsTable
         REMINDERS_TOPIC_ARN: !Ref RemindersTopic
         PLAID_CLIENT_ID: !Ref PlaidClientId
         PLAID_SECRET: !Ref PlaidSecret
@@ -171,6 +172,19 @@ Resources:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: category_rules
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: { SSEEnabled: true }
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+
+  RecurringBillsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: recurring_bills
       BillingMode: PAY_PER_REQUEST
       SSESpecification: { SSEEnabled: true }
       AttributeDefinitions:
@@ -415,6 +429,27 @@ Resources:
           Type: HttpApi
           Properties: { ApiId: !Ref HouseholdApi, Path: "/category-rules/{ruleId}", Method: delete }
 
+  RecurringBillsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dist/RecurringBillsFunction/
+      Handler: index.handler
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref RecurringBillsTable }
+      Events:
+        List:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/recurring-bills", Method: get }
+        Create:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/recurring-bills", Method: post }
+        Update:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/recurring-bills/{billId}", Method: put }
+        Delete:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/recurring-bills/{billId}", Method: delete }
+
   SpendingPlansFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -445,6 +480,7 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref CashflowEventsTable }
         - DynamoDBReadPolicy: { TableName: !Ref AccountsTable }
+        - DynamoDBReadPolicy: { TableName: !Ref RecurringBillsTable }
       Events:
         Month:
           Type: HttpApi
@@ -463,6 +499,7 @@ Resources:
       Handler: index.handler
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref AccountsTable }
+        - DynamoDBReadPolicy: { TableName: !Ref SpendingPlansTable }
       Events:
         Get:
           Type: HttpApi
@@ -479,6 +516,7 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref G2Table }
         - DynamoDBReadPolicy: { TableName: !Ref AccountsTable }
+        - DynamoDBReadPolicy: { TableName: !Ref SpendingPlansTable }
       Events:
         Get:
           Type: HttpApi
@@ -574,6 +612,67 @@ Resources:
           Properties:
             Schedule: cron(0 12 * * ? *)
 
+  # ---------------- Frontend hosting (S3 + CloudFront) ----------------
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  FrontendOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub ${AWS::StackName}-frontend-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  FrontendDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: FrontendS3Origin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !Ref FrontendOriginAccessControl
+            S3OriginConfig: { OriginAccessIdentity: '' }
+        DefaultCacheBehavior:
+          TargetOriginId: FrontendS3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          # Managed "CachingOptimized" policy.
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        # React Router's client-side routes 404 at the S3 origin on a hard
+        # refresh/deep link — serve index.html instead and let the SPA route.
+        CustomErrorResponses:
+          - { ErrorCode: 403, ResponseCode: 200, ResponsePagePath: /index.html }
+          - { ErrorCode: 404, ResponseCode: 200, ResponsePagePath: /index.html }
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub ${FrontendBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}
+
 Outputs:
   ApiUrl:
     Value: !Sub https://${HouseholdApi}.execute-api.${AWS::Region}.amazonaws.com
@@ -581,3 +680,9 @@ Outputs:
     Value: !Ref HouseholdUserPool
   UserPoolClientId:
     Value: !Ref HouseholdUserPoolClient
+  FrontendBucketName:
+    Value: !Ref FrontendBucket
+  FrontendDomain:
+    Value: !GetAtt FrontendDistribution.DomainName
+  FrontendDistributionId:
+    Value: !Ref FrontendDistribution

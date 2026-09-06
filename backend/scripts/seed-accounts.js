@@ -1,15 +1,15 @@
-// Seeds the household's known accounts and recurring bills as manual records,
-// so the trackers work before Plaid is connected. Plaid-linked accounts
-// replace these once each institution is linked.
+// Seeds the household's known accounts, recurring bills, and a starter
+// spending plan, so the trackers work before Plaid is connected. Plaid-linked
+// accounts replace the manual accounts once each institution is linked.
 // Usage: node scripts/seed-accounts.js [--local]
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, PutCommand } = require('@aws-sdk/lib-dynamodb');
+const { DynamoDBDocumentClient, PutCommand, ScanCommand, DeleteCommand } = require('@aws-sdk/lib-dynamodb');
 
 const local = process.argv.includes('--local');
 const HOUSEHOLD_ID = 'lindsey-001';
 
 const client = new DynamoDBClient({
-  region: 'us-east-1',
+  region: local ? 'us-east-1' : process.env.AWS_REGION || 'us-west-1',
   ...(local
     ? { endpoint: 'http://localhost:8000', credentials: { accessKeyId: 'local', secretAccessKey: 'local' } }
     : {}),
@@ -47,20 +47,46 @@ const ACCOUNTS = [
     currentBalance: 0, isG1Target: false },
 ];
 
-const RECURRING = [
-  { desc: 'Victoria pay', amount: 2098.84, day: 1, type: 'income' },
-  { desc: 'Victoria pay', amount: 2098.84, day: 15, type: 'income' },
-  { desc: 'Spectrum internet', amount: -80, day: 5, type: 'bill' },
-  { desc: 'T-Mobile (CJ)', amount: -206, day: 24, type: 'bill' },
-  { desc: 'T-Mobile (Victoria)', amount: -140, day: 24, type: 'bill' },
-  { desc: 'Storage unit', amount: -95, day: 1, type: 'bill' },
-  { desc: 'Childcare', amount: -300, day: 1, type: 'bill' },
-  { desc: 'Childcare', amount: -300, day: 15, type: 'bill' },
-  { desc: 'Career Starter Loan payment', amount: -461.39, day: 15, type: 'loan_payment' },
-  { desc: 'Ally auto payment', amount: -334.82, day: 19, type: 'loan_payment' },
-  { desc: 'Exeter auto payment', amount: -367.73, day: 26, type: 'loan_payment' },
-  { desc: 'Affirm payment', amount: -84.17, day: 10, type: 'loan_payment' },
+// Recurring Bills — the single source of truth the cashflow projection and
+// Spending Plan auto-fill both read from (see backend/functions/recurring-bills).
+const RECURRING_BILLS = [
+  { id: 'victoria_pay_1', desc: 'Victoria pay', category: 'Income', amount: 2098.84, day: 1, type: 'income' },
+  { id: 'victoria_pay_15', desc: 'Victoria pay', category: 'Income', amount: 2098.84, day: 15, type: 'income' },
+  { id: 'spectrum_internet', desc: 'Spectrum internet', category: 'Internet', amount: -80, day: 5, type: 'bill' },
+  { id: 'tmobile_cj', desc: 'T-Mobile (CJ)', category: 'Phone', amount: -206, day: 24, type: 'bill' },
+  { id: 'tmobile_victoria', desc: 'T-Mobile (Victoria)', category: 'Phone', amount: -140, day: 24, type: 'bill' },
+  { id: 'storage_unit', desc: 'Storage unit', category: 'Childcare_Storage', amount: -95, day: 1, type: 'bill' },
+  { id: 'childcare_1', desc: 'Childcare', category: 'Childcare', amount: -300, day: 1, type: 'bill' },
+  { id: 'childcare_15', desc: 'Childcare', category: 'Childcare', amount: -300, day: 15, type: 'bill' },
+  { id: 'career_starter_payment', desc: 'Career Starter Loan payment', category: 'Debt_Payment', amount: -461.39, day: 15, type: 'bill' },
+  { id: 'ally_payment', desc: 'Ally auto payment', category: 'Debt_Payment', amount: -334.82, day: 19, type: 'bill' },
+  { id: 'exeter_payment', desc: 'Exeter auto payment', category: 'Debt_Payment', amount: -367.73, day: 26, type: 'bill' },
+  { id: 'affirm_payment', desc: 'Affirm payment', category: 'Debt_Payment', amount: -84.17, day: 10, type: 'bill' },
 ];
+
+// Starter plan for the 2026-09-15 pay period, with allocations pre-summed
+// from the bills above the same way the frontend's auto-fill will compute
+// them (bills with day 15-28 land in this period).
+const STARTER_PLAN = {
+  payDate: '2026-09-15',
+  label: 'Sep 15 Plan',
+  income: 2098.84,
+  allocations: { Phone: 346, Childcare: 300, Debt_Payment: 1163.94 },
+  g1Extra: 0,
+  g2Allocation: 250,
+  notes: 'Seeded starter plan — adjust allocations and goals to match reality.',
+};
+
+async function scanAll(tableName) {
+  let items = [];
+  let ExclusiveStartKey;
+  do {
+    const result = await doc.send(new ScanCommand({ TableName: tableName, ExclusiveStartKey }));
+    items = items.concat(result.Items ?? []);
+    ExclusiveStartKey = result.LastEvaluatedKey;
+  } while (ExclusiveStartKey);
+  return items;
+}
 
 async function main() {
   for (const a of ACCOUNTS) {
@@ -79,21 +105,26 @@ async function main() {
   }
   console.log(`seeded ${ACCOUNTS.length} accounts`);
 
-  for (const r of RECURRING) {
-    const eventId = `recurring_${r.desc.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${r.day}`;
+  for (const b of RECURRING_BILLS) {
     await doc.send(new PutCommand({
-      TableName: 'cashflow_events',
+      TableName: 'recurring_bills',
       Item: {
-        // eventDate is omitted, not null: it is a GSI key, and the recurring
-        // row is a template that the cashflow Lambda projects into each month.
-        PK: HOUSEHOLD_ID, SK: `recurring#${eventId}`, eventId,
-        type: r.type, description: r.desc, amount: r.amount,
-        accountId: null, source: 'recurring', isRecurring: true,
-        recurringDayOfMonth: r.day, isPCSRelated: false,
+        PK: HOUSEHOLD_ID, SK: b.id,
+        description: b.desc, category: b.category, amount: b.amount,
+        dayOfMonth: b.day, type: b.type, isActive: true,
       },
     }));
   }
-  console.log(`seeded ${RECURRING.length} recurring cashflow events`);
+  console.log(`seeded ${RECURRING_BILLS.length} recurring bills`);
+
+  // Clean up the old recurring#* rows this script used to write directly
+  // into cashflow_events, back before recurring bills got their own table.
+  const cashflowEvents = await scanAll('cashflow_events');
+  const staleRecurring = cashflowEvents.filter((e) => typeof e.SK === 'string' && e.SK.startsWith('recurring#'));
+  for (const row of staleRecurring) {
+    await doc.send(new DeleteCommand({ TableName: 'cashflow_events', Key: { PK: row.PK, SK: row.SK } }));
+  }
+  if (staleRecurring.length) console.log(`removed ${staleRecurring.length} stale recurring# rows from cashflow_events`);
 
   await doc.send(new PutCommand({
     TableName: 'g2_tracker',
@@ -101,6 +132,21 @@ async function main() {
             monthlyContribution: 500, pcsDate: '2026-12-15', notes: '', updatedAt: new Date().toISOString() },
   }));
   console.log('seeded G2 tracker');
+
+  const now = new Date().toISOString();
+  await doc.send(new PutCommand({
+    TableName: 'spending_plans',
+    Item: {
+      PK: HOUSEHOLD_ID, SK: STARTER_PLAN.payDate,
+      label: STARTER_PLAN.label, income: STARTER_PLAN.income, allocations: STARTER_PLAN.allocations,
+      notes: STARTER_PLAN.notes, g1Extra: STARTER_PLAN.g1Extra, g2Allocation: STARTER_PLAN.g2Allocation,
+      // Matches scorePlan() in backend/functions/spending-plans/index.js:
+      // debt (1163.94+0)/2098.84=55.5%, savings 250/2098.84=11.9%, combined 67.4% -> A.
+      score: 'A', scoreBreakdown: { debtContributionPct: 55.5, savingsContributionPct: 11.9, combinedPct: 67.4 },
+      createdAt: now, updatedAt: now,
+    },
+  }));
+  console.log(`seeded starter spending plan for ${STARTER_PLAN.payDate}`);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

@@ -2,12 +2,31 @@ const { queryByPK, get, put } = require('../../shared/db');
 const { getHouseholdContext } = require('../../shared/auth');
 const { ok, badRequest, parseBody } = require('../../shared/http');
 const { projectPayoff } = require('../../shared/snowball');
+const { getActivePlan } = require('../../shared/activePlan');
 
 const ACCOUNTS_TABLE = process.env.ACCOUNTS_TABLE;
 
 async function getG1(householdId, query) {
-  const monthlyExtra = Number(query.monthlyExtra ?? 0);
   const strategy = query.strategy === 'avalanche' ? 'avalanche' : 'snowball';
+
+  let monthlyExtra;
+  let monthlyExtraSource;
+  let activePlanPayDate = null;
+
+  if (query.monthlyExtra != null) {
+    monthlyExtra = Number(query.monthlyExtra);
+    monthlyExtraSource = 'override';
+  } else {
+    const plan = await getActivePlan(householdId);
+    if (plan) {
+      monthlyExtra = plan.g1Extra ?? 0;
+      monthlyExtraSource = 'plan';
+      activePlanPayDate = plan.payDate;
+    } else {
+      monthlyExtra = 0;
+      monthlyExtraSource = 'default';
+    }
+  }
 
   const accounts = (await queryByPK(ACCOUNTS_TABLE, householdId))
     .filter((a) => a.isG1Target)
@@ -29,6 +48,8 @@ async function getG1(householdId, query) {
     accounts,
     totalBalance,
     monthlyExtra,
+    monthlyExtraSource,
+    activePlanPayDate,
     projection: projectPayoff(accounts, monthlyExtra, strategy),
   });
 }

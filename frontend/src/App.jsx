@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard.jsx';
 import Cashflow from './pages/Cashflow.jsx';
 import Transactions from './pages/Transactions.jsx';
 import CategoryRules from './pages/CategoryRules.jsx';
+import RecurringBills from './pages/RecurringBills.jsx';
 import G1Tracker from './pages/G1Tracker.jsx';
 import G2Tracker from './pages/G2Tracker.jsx';
 import G3Tracker from './pages/G3Tracker.jsx';
@@ -28,6 +29,7 @@ export default function App() {
         <Route path="/cashflow" element={<Cashflow />} />
         <Route path="/transactions" element={<Transactions />} />
         <Route path="/transactions/rules" element={<CategoryRules />} />
+        <Route path="/recurring-bills" element={<RecurringBills />} />
         <Route path="/g1" element={<G1Tracker />} />
         <Route path="/g2" element={<G2Tracker />} />
         <Route path="/g3" element={<G3Tracker />} />

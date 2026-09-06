@@ -1,9 +1,14 @@
 const { get, put, queryByPK } = require('../../shared/db');
 const { getHouseholdContext } = require('../../shared/auth');
 const { ok, badRequest, parseBody } = require('../../shared/http');
+const { getActivePlan } = require('../../shared/activePlan');
 
 const G2_TABLE = process.env.G2_TABLE;
 const ACCOUNTS_TABLE = process.env.ACCOUNTS_TABLE;
+
+// Plans are per pay period (paid twice a month, 1st and 15th per the spec),
+// so a plan's g2Allocation is doubled to get a monthly contribution figure.
+const PAY_PERIODS_PER_MONTH = 2;
 
 function project({ targetAmount, currentAmount, monthlyContribution, pcsDate }) {
   if (!monthlyContribution || currentAmount >= targetAmount) {
@@ -40,10 +45,22 @@ async function getG2(householdId) {
     notes: '',
   };
 
+  const activePlan = await getActivePlan(householdId);
+  const monthlyContribution =
+    activePlan != null ? (activePlan.g2Allocation ?? 0) * PAY_PERIODS_PER_MONTH : record.monthlyContribution ?? 0;
+  const monthlyContributionSource = activePlan != null ? 'plan' : 'manual';
+
   const currentAmount = await currentSavingsBalance(householdId, record.savingsAccountId);
   const { PK, ...rest } = record;
 
-  return ok({ ...rest, currentAmount, ...project({ ...record, currentAmount }) });
+  return ok({
+    ...rest,
+    monthlyContribution,
+    monthlyContributionSource,
+    activePlanPayDate: activePlan?.payDate ?? null,
+    currentAmount,
+    ...project({ ...record, monthlyContribution, currentAmount }),
+  });
 }
 
 exports.handler = async (event) => {

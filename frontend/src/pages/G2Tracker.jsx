@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import BlueprintCard from '../components/BlueprintCard.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import { useG2, useUpdateG2, useAccounts } from '../api/hooks.js';
@@ -20,6 +21,8 @@ export default function G2Tracker() {
       });
     }
   }, [data, form]);
+
+  const isPlanDriven = data?.monthlyContributionSource === 'plan';
 
   const progress = data?.targetAmount ? Math.min(100, (data.currentAmount / data.targetAmount) * 100) : 0;
   const savingsAccounts = (accountsData?.accounts ?? []).filter(
@@ -65,13 +68,24 @@ export default function G2Tracker() {
             </div>
             <div className="field">
               <label htmlFor="monthlyContribution">Monthly contribution</label>
-              <input
-                id="monthlyContribution"
-                className="input"
-                type="number"
-                value={form.monthlyContribution}
-                onChange={(e) => setForm({ ...form, monthlyContribution: Number(e.target.value) || 0 })}
-              />
+              {isPlanDriven ? (
+                <>
+                  <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 20, minHeight: 36, display: 'flex', alignItems: 'center' }}>
+                    {money(data.monthlyContribution)}
+                  </div>
+                  <div className="text-muted" style={{ fontSize: 11 }}>
+                    From the {data.activePlanPayDate} Spending Plan — <Link to="/spending-plans">edit it there</Link>
+                  </div>
+                </>
+              ) : (
+                <input
+                  id="monthlyContribution"
+                  className="input"
+                  type="number"
+                  value={form.monthlyContribution}
+                  onChange={(e) => setForm({ ...form, monthlyContribution: Number(e.target.value) || 0 })}
+                />
+              )}
             </div>
             <div className="field">
               <label htmlFor="pcsDate">PCS date</label>
@@ -103,7 +117,10 @@ export default function G2Tracker() {
             className="btn btn-primary"
             style={{ alignSelf: 'flex-start' }}
             disabled={updateG2.isPending}
-            onClick={() => updateG2.mutate(form)}
+            onClick={() => {
+              const { monthlyContribution, ...rest } = form;
+              updateG2.mutate(isPlanDriven ? rest : form);
+            }}
           >
             {updateG2.isPending ? 'Saving…' : 'Save'}
           </button>

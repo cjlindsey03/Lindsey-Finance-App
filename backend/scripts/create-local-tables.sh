@@ -51,6 +51,7 @@ create_composite_table g3_tracker
 create_composite_table rentals_cache
 create_simple_table g2_tracker
 create_composite_table category_rules
+create_composite_table recurring_bills
 
 if table_exists transactions; then echo "exists  transactions"; else
 aws dynamodb create-table \

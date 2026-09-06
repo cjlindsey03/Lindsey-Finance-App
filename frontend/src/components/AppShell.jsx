@@ -23,6 +23,7 @@ const NAV_GROUPS = [
   {
     label: 'Planning',
     items: [
+      { to: '/recurring-bills', label: 'Recurring Bills', icon: 'calendar' },
       { to: '/spending-plans', label: 'Spending Plans', icon: 'wallet' },
       { to: '/pcs-simulator', label: 'PCS Simulator', icon: 'truck' },
       { to: '/tasks', label: 'Tasks', icon: 'check' },

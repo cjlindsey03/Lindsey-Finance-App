@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import BlueprintCard from '../components/BlueprintCard.jsx';
 import PageHeader from '../components/PageHeader.jsx';
-import { useSpendingPlans, useSpendingPlan, useSaveSpendingPlan } from '../api/hooks.js';
+import { useSpendingPlans, useSpendingPlan, useSaveSpendingPlan, useRecurringBills } from '../api/hooks.js';
 import { CATEGORIES } from '../constants/categories.js';
 import { money, percent } from '../utils/format.js';
+import { suggestAllocationsFromBills } from '../utils/billPeriod.js';
 
 function useMounted() {
   const [mounted, setMounted] = useState(false);
@@ -34,6 +35,27 @@ export default function SpendingPlans() {
   }));
 
   const [draft, setDraft] = useState({ payDate: '', income: '', allocations: {} });
+  const { data: billsData } = useRecurringBills();
+  const [autoFilledCategories, setAutoFilledCategories] = useState([]);
+
+  // Pre-fill fixed-cost categories (Housing, Debt_Payment, Childcare, etc.)
+  // from whichever Recurring Bills land in this pay period. Only runs when
+  // the pay date itself changes, so it never clobbers a manual edit made
+  // afterward to some other field.
+  useEffect(() => {
+    if (!draft.payDate || !billsData?.bills) return;
+    const suggested = suggestAllocationsFromBills(billsData.bills, draft.payDate);
+    if (!Object.keys(suggested).length) return;
+    setDraft((d) => ({
+      ...d,
+      allocations: {
+        ...d.allocations,
+        ...Object.fromEntries(Object.entries(suggested).map(([k, v]) => [k, String(v)])),
+      },
+    }));
+    setAutoFilledCategories(Object.keys(suggested));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.payDate, billsData]);
 
   const submit = (e) => {
     e.preventDefault();
@@ -152,11 +174,23 @@ export default function SpendingPlans() {
             </div>
           </div>
 
-          <div className="card-kicker">Allocations</div>
+          <div>
+            <div className="card-kicker">Allocations</div>
+            {autoFilledCategories.length > 0 && (
+              <div className="text-muted" style={{ fontSize: 11 }}>
+                {autoFilledCategories.join(', ')} pre-filled from Recurring Bills for this pay period — override any of them below.
+              </div>
+            )}
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 'var(--space-3)' }}>
             {CATEGORIES.filter((c) => c !== 'Income').map((category) => (
               <div className="field" key={category}>
-                <label htmlFor={`alloc-${category}`}>{category}</label>
+                <label htmlFor={`alloc-${category}`}>
+                  {category}
+                  {autoFilledCategories.includes(category) && (
+                    <span className="tag tag-outline" style={{ marginLeft: 6, fontSize: 9 }}>bills</span>
+                  )}
+                </label>
                 <input
                   id={`alloc-${category}`}
                   className="input"
