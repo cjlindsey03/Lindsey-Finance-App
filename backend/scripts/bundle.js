@@ -25,7 +25,7 @@ async function main() {
       entryPoints: [path.join(FUNCTIONS_DIR, dir, 'index.js')],
       bundle: true,
       platform: 'node',
-      target: 'node20',
+      target: 'node22',
       format: 'cjs',
       outfile: path.join(outdir, 'index.js'),
       // Provided by the Lambda Node 20 runtime — no need to ship them.
