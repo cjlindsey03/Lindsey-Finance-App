@@ -1,0 +1,25 @@
+/* App-wide dark theme — ported from the .hf-dark block in the Claude Design
+   mockup (Household Dashboard.dc.html). This app has one theme, not a toggle. */
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap');
+
+:root {
+  --color-bg: #050607;
+  --color-surface: #0d0f11;
+  --color-surface-2: #15181b;
+  --color-text: #eef2f6;
+  --color-divider: color-mix(in srgb, #eef2f6 14%, transparent);
+  --color-accent: #3f6fd1;
+  --color-accent-600: #2f56ab;
+  --color-accent-700: #002366;
+  --color-overspend: #c9605a;
+  --font-heading: "Space Grotesk", system-ui, sans-serif;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, .45);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, .55);
+}
+
+.btn-primary { color: #0b1017; }
+::selection { background: color-mix(in srgb, #7fb2de 30%, transparent); }
+
+.hf-scroll::-webkit-scrollbar { width: 8px; }
+.hf-scroll::-webkit-scrollbar-thumb { background: var(--color-divider); }

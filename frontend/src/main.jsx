@@ -5,6 +5,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Amplify } from 'aws-amplify';
 import App from './App.jsx';
 import { AuthProvider } from './context/AuthContext.jsx';
+import './styles/design-system.css';
+import './styles/theme-dark.css';
 
 Amplify.configure({
   Auth: {

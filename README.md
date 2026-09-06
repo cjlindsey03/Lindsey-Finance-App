@@ -46,6 +46,12 @@ You'll be prompted for `PlaidClientId`, `PlaidSecret`, `PlaidEnv`, and `Rentcast
 
 ## Status
 
-Implemented so far: Cognito + DynamoDB (all 9 tables) + API Gateway skeleton in `template.yaml`, and the three Plaid-integration Lambdas (`plaid-link-create`, `plaid-exchange-token`, `plaid-sync`) with the categorization-rules engine and upcoming-payment prediction. Everything else in the [Build Order](Build%20Instructions.md#build-order-recommended) (accounts page, transactions, G1/G2/G3 trackers, cashflow calendar, spending plans, PCS simulator, tasks, rentals, reminders, settings) is not yet built — follow the spec's build order for what's next.
+**Backend** — all 15 Lambdas and 12 DynamoDB tables are defined in `template.yaml`: Plaid link/exchange/sync, accounts (incl. config editing), transactions, category rules (with dry-run testing), cashflow, spending plans, G1/G2/G3 trackers, PCS simulator, tasks, rentals proxy, and SNS reminders. Shared logic lives in `backend/shared/` (snowball projection, M&IE per-diem, categorization rules engine, Plaid sync).
+
+**Frontend** — the "Industry" design system from the Claude Design mockup is ported into `frontend/src/styles/`, with a shared `AppShell` sidebar and every page wired to its API via TanStack Query hooks in `frontend/src/api/hooks.js`.
+
+**Not yet verified** — none of this has been run: the local toolchain (Node, Docker, SAM CLI) isn't installed on this machine yet, so nothing has been built, invoked, or deployed. That's the next step.
+
+Still to do: Plaid Link SDK in the browser (Settings currently only proves the backend can mint a link token), phone numbers for SNS reminder subscriptions, and a first `sam deploy`.
 
 Sensitive personal documents (LES, credit reports, paystubs) are gitignored — keep them local only, and confirm the GitHub remote is private before pushing.

@@ -35,6 +35,7 @@ create_composite_table spending_plans
 create_composite_table pcs_simulations
 create_composite_table tasks
 create_composite_table g3_tracker
+create_composite_table rentals_cache
 create_simple_table g2_tracker
 create_simple_table category_rules
 
