@@ -292,13 +292,25 @@ Resources:
     Properties:
       CodeUri: dist/ReportsFunction/
       Handler: index.handler
+      Timeout: 30
       Policies:
-        - DynamoDBReadPolicy: { TableName: !Ref ReportsTable }
-        - S3ReadPolicy: { BucketName: !Ref ReportsBucket }
+        # Generation reads everything the PDF summarises, and writes the
+        # report itself — the same access the scheduled job needs.
+        - DynamoDBCrudPolicy: { TableName: !Ref ReportsTable }
+        - DynamoDBReadPolicy: { TableName: !Ref RecurringBillsTable }
+        - DynamoDBReadPolicy: { TableName: !Ref CashflowEventsTable }
+        - DynamoDBReadPolicy: { TableName: !Ref SpendingPlansTable }
+        - DynamoDBReadPolicy: { TableName: !Ref AccountsTable }
+        - DynamoDBReadPolicy: { TableName: !Ref G2Table }
+        - DynamoDBReadPolicy: { TableName: !Ref G3Table }
+        - S3CrudPolicy: { BucketName: !Ref ReportsBucket }
       Events:
         List:
           Type: HttpApi
           Properties: { ApiId: !Ref HouseholdApi, Path: "/reports", Method: get }
+        Generate:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/reports", Method: post }
 
   RecurringBillsFunction:
     Type: AWS::Serverless::Function

@@ -22,6 +22,9 @@ Plaid tiers were out of scope. Everything is maintained deliberately instead:
   change writes a balance snapshot so G3 builds a real utilization history.
 - **Cashflow** — a net-flow analyzer, deliberately *not* a bank balance. It starts at $0 and
   answers "does this month's income cover its bills, and where is it tightest?"
+- **Reports** — a one-page PDF per pay period (income vs. bills line by line, the committed
+  plan's grade, a goals snapshot). Generated automatically at the end of each period, and on
+  demand for any period from the Reports page.
 
 **Pay periods are calendar half-months** (1st–14th, 15th–EOM), matching the 1st/15th
 paydays. Drafts belong to a period; once it rolls over, stale drafts are purged by the daily
@@ -107,5 +110,17 @@ Verified end to end against the live deployment and locally:
   Lejeune, in a single API call
 - All 11 pages render error-free at 344 / 390 / 884 / 1440 px
 
-**Not verified firsthand:** SMS reminder delivery (needs a real EventBridge tick; publishes
-are non-fatal so a failure can't block the draft purge).
+## Notifications are built but dormant
+
+The reminders Lambda publishes bill-due and statement-close warnings, plus a period-end
+report notice, to the `household-reminders` SNS topic, and both phone numbers are
+subscribed. **None of it delivers yet.** The account is in the SNS SMS sandbox, and getting
+out requires A2P 10DLC originator registration (AWS gates this behind business
+registration). That registration has been requested; once it's approved the texts start
+arriving on their own with no code change.
+
+Until then the app is meant to be used by pulling up reports directly — generate one from
+the Reports page whenever you want it.
+
+Note that a successful `sns:Publish` proves nothing about delivery: in sandbox, messages to
+unverified numbers are accepted and silently dropped.

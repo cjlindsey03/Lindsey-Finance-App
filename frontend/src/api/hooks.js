@@ -216,6 +216,15 @@ export function useReports() {
   return useQuery({ queryKey: ['reports'], queryFn: () => api('/reports'), staleTime: 0 });
 }
 
+export function useGenerateReport() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (date) => api('/reports', { method: 'POST', body: { date } }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['reports'] }),
+  });
+}
+
 export function useRecurringBills() {
   const api = useApi();
   return useQuery({ queryKey: ['recurring-bills'], queryFn: () => api('/recurring-bills') });
