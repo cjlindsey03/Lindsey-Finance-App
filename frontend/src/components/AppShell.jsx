@@ -1,5 +1,7 @@
-import { NavLink } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
 import Icon from './Icon.jsx';
+import './AppShell.css';
 
 const NAV_GROUPS = [
   {
@@ -33,11 +35,39 @@ const NAV_GROUPS = [
   },
 ];
 
-function NavItem({ to, label, icon, end }) {
+function BrandMark({ size = 34 }) {
+  return (
+    <div
+      className="blueprint"
+      style={{
+        width: size,
+        height: size,
+        flex: 'none',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontFamily: 'var(--font-heading)',
+        fontWeight: 600,
+        fontSize: size * 0.41,
+        color: 'var(--color-accent)',
+      }}
+    >
+      <i className="corner tl" />
+      <i className="corner tr" />
+      <i className="corner bl" />
+      <i className="corner br" />
+      HF
+    </div>
+  );
+}
+
+function NavItem({ to, label, icon, end, onNavigate }) {
   return (
     <NavLink
       to={to}
       end={end}
+      onClick={onNavigate}
+      className="shell-nav-item"
       style={({ isActive }) => ({
         display: 'flex',
         alignItems: 'center',
@@ -57,41 +87,40 @@ function NavItem({ to, label, icon, end }) {
 }
 
 export default function AppShell({ children }) {
+  const [navOpen, setNavOpen] = useState(false);
+  const { pathname } = useLocation();
+
+  // Close the drawer on navigation and on Escape.
+  useEffect(() => setNavOpen(false), [pathname]);
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && setNavOpen(false);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--color-bg)', color: 'var(--color-text)', fontFamily: 'var(--font-body)' }}>
-      <div
-        style={{
-          width: 238,
-          flexShrink: 0,
-          borderRight: '1px solid var(--color-divider)',
-          padding: 'var(--space-4)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--space-6)',
-        }}
-      >
+    <div className="shell">
+      <div className="shell-topbar">
+        <button
+          type="button"
+          className="btn btn-secondary btn-icon"
+          aria-label="Open navigation"
+          aria-expanded={navOpen}
+          onClick={() => setNavOpen(true)}
+        >
+          <Icon name="list" size={18} />
+        </button>
+        <BrandMark size={28} />
+        <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 15 }}>
+          Household Finance
+        </div>
+      </div>
+
+      {navOpen && <div className="shell-backdrop" onClick={() => setNavOpen(false)} />}
+
+      <div className="shell-sidebar" data-open={navOpen}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-          <div
-            className="blueprint"
-            style={{
-              width: 34,
-              height: 34,
-              flex: 'none',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontFamily: 'var(--font-heading)',
-              fontWeight: 600,
-              fontSize: 14,
-              color: 'var(--color-accent)',
-            }}
-          >
-            <i className="corner tl" />
-            <i className="corner tr" />
-            <i className="corner bl" />
-            <i className="corner br" />
-            HF
-          </div>
+          <BrandMark />
           <div>
             <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 15, lineHeight: 1.1 }}>
               Household Finance
@@ -116,7 +145,7 @@ export default function AppShell({ children }) {
               {group.label}
             </div>
             {group.items.map((item) => (
-              <NavItem key={item.to} {...item} />
+              <NavItem key={item.to} {...item} onNavigate={() => setNavOpen(false)} />
             ))}
           </div>
         ))}
@@ -164,20 +193,7 @@ export default function AppShell({ children }) {
         </div>
       </div>
 
-      <div
-        className="hf-scroll"
-        style={{
-          flex: 1,
-          padding: 'var(--space-6)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--space-6)',
-          overflow: 'auto',
-          maxHeight: '100vh',
-        }}
-      >
-        {children}
-      </div>
+      <div className="shell-main hf-scroll">{children}</div>
     </div>
   );
 }

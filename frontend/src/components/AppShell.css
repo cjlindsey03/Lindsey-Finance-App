@@ -1,0 +1,86 @@
+/* Shell layout. The sidebar is permanent on wide screens and becomes a
+   slide-over drawer below 900px — the folded Z Fold (344px) and iPhone
+   can't spare 238px for permanent navigation. */
+.shell {
+  display: flex;
+  min-height: 100vh;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+}
+
+.shell-sidebar {
+  width: 238px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--color-divider);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  background: var(--color-bg);
+}
+
+.shell-main {
+  flex: 1;
+  min-width: 0; /* lets wide tables scroll instead of stretching the page */
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  overflow: auto;
+  max-height: 100vh;
+}
+
+.shell-topbar { display: none; }
+.shell-backdrop { display: none; }
+
+@media (max-width: 899px) {
+  .shell { flex-direction: column; }
+
+  .shell-topbar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--color-divider);
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    background: var(--color-bg);
+  }
+
+  .shell-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 40;
+    width: min(280px, 84vw);
+    overflow-y: auto;
+    transform: translateX(-100%);
+    transition: transform 220ms cubic-bezier(.2, .8, .2, 1);
+    box-shadow: var(--shadow-lg);
+  }
+  .shell-sidebar[data-open='true'] { transform: translateX(0); }
+
+  .shell-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 35;
+    background: color-mix(in srgb, #000 55%, transparent);
+  }
+
+  .shell-main {
+    max-height: none;
+    overflow: visible;
+    padding: var(--space-4);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell-sidebar { transition: none; }
+}
+
+/* Touch targets stay finger-sized on phones. */
+@media (max-width: 899px) {
+  .shell-nav-item { padding-block: 11px; }
+}

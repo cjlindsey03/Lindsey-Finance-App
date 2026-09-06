@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#050607"/>
+  <rect x="86" y="86" width="340" height="340" fill="none" stroke="#eef2f6" stroke-opacity="0.16" stroke-width="8"/>
+  <g stroke="#3f6fd1" stroke-width="14" stroke-linecap="square" fill="none">
+    <path d="M56 128 L56 56 L128 56"/>
+    <path d="M384 56 L456 56 L456 128"/>
+    <path d="M456 384 L456 456 L384 456"/>
+    <path d="M128 456 L56 456 L56 384"/>
+  </g>
+  <text x="256" y="258" fill="#3f6fd1" font-family="'Space Grotesk',system-ui,sans-serif"
+        font-size="190" font-weight="600" text-anchor="middle" dominant-baseline="central">HF</text>
+</svg>

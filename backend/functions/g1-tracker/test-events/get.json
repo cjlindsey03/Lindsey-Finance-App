@@ -1,0 +1,1 @@
+{"version":"2.0","routeKey":"GET /g1","rawPath":"/g1","queryStringParameters":{"monthlyExtra":"300"},"requestContext":{"http":{"method":"GET","path":"/g1"}},"isBase64Encoded":false}

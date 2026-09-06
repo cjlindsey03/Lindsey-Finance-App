@@ -5,12 +5,20 @@
   "description": "Lambda functions for the Lindsey household financial dashboard",
   "scripts": {
     "local-api": "sam local start-api --env-vars env.local.json --docker-network sam-local",
-    "build": "sam build"
+    "build": "npm run bundle && sam build",
+    "bundle": "node scripts/bundle.js",
+    "seed": "node scripts/seed-accounts.js --local"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.600.0",
     "@aws-sdk/client-sns": "^3.600.0",
     "@aws-sdk/lib-dynamodb": "^3.600.0",
     "plaid": "^27.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
   }
 }

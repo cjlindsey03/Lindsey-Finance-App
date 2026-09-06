@@ -1,0 +1,1 @@
+{"version":"2.0","routeKey":"GET /cashflow/{year}/{month}","rawPath":"/cashflow/2026/9","pathParameters":{"year":"2026","month":"9"},"requestContext":{"http":{"method":"GET","path":"/cashflow/2026/9"}},"isBase64Encoded":false}

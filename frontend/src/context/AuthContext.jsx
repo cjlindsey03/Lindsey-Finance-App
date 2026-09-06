@@ -3,11 +3,21 @@ import { getCurrentUser, fetchAuthSession, signIn, signOut } from 'aws-amplify/a
 
 const AuthContext = createContext(null);
 
+// `sam local` skips JWT verification and assumes the one household, so local
+// dev signs in automatically rather than requiring a Cognito pool to exist.
+const LOCAL_AUTH = import.meta.env.VITE_AUTH_MODE === 'local';
+const LOCAL_USER = { username: 'cj', idToken: null };
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const loadSession = useCallback(async () => {
+    if (LOCAL_AUTH) {
+      setUser(LOCAL_USER);
+      setLoading(false);
+      return;
+    }
     try {
       const current = await getCurrentUser();
       const session = await fetchAuthSession();
@@ -24,12 +34,13 @@ export function AuthProvider({ children }) {
   }, [loadSession]);
 
   const login = async (username, password) => {
+    if (LOCAL_AUTH) return loadSession();
     await signIn({ username, password });
     await loadSession();
   };
 
   const logout = async () => {
-    await signOut();
+    if (!LOCAL_AUTH) await signOut();
     setUser(null);
   };
 

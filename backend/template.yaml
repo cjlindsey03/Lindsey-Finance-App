@@ -16,6 +16,10 @@ Parameters:
   RentcastApiKey:
     Type: String
     NoEcho: true
+  AllowedOrigin:
+    Type: String
+    Description: Origin allowed to call the API (the deployed SPA's CloudFront URL).
+    Default: "*"
 
 Globals:
   Function:
@@ -25,6 +29,8 @@ Globals:
     Environment:
       Variables:
         DYNAMODB_REGION: !Ref AWS::Region
+        # Empty in AWS; set to DynamoDB Local by env.local.json for `sam local`.
+        DYNAMODB_LOCAL_ENDPOINT: ""
         ACCOUNTS_TABLE: !Ref AccountsTable
         PLAID_ITEMS_TABLE: !Ref PlaidItemsTable
         BALANCE_SNAPSHOTS_TABLE: !Ref BalanceSnapshotsTable
@@ -77,6 +83,11 @@ Resources:
   HouseholdApi:
     Type: AWS::Serverless::HttpApi
     Properties:
+      CorsConfiguration:
+        AllowOrigins: [!Ref AllowedOrigin]
+        AllowHeaders: [Authorization, Content-Type]
+        AllowMethods: [GET, POST, PUT, DELETE, OPTIONS]
+        AllowCredentials: false
       Auth:
         Authorizers:
           CognitoAuthorizer:
@@ -89,11 +100,17 @@ Resources:
 
   # ---------------- DynamoDB tables ----------------
   AccountsTable:
-    Type: AWS::Serverless::SimpleTable
+    Type: AWS::DynamoDB::Table
     Properties:
       TableName: accounts
-      PrimaryKey: { Name: PK, Type: String }
+      BillingMode: PAY_PER_REQUEST
       SSESpecification: { SSEEnabled: true }
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
 
   PlaidItemsTable:
     Type: AWS::DynamoDB::Table
@@ -143,11 +160,17 @@ Resources:
           Projection: { ProjectionType: ALL }
 
   CategoryRulesTable:
-    Type: AWS::Serverless::SimpleTable
+    Type: AWS::DynamoDB::Table
     Properties:
       TableName: category_rules
-      PrimaryKey: { Name: PK, Type: String }
+      BillingMode: PAY_PER_REQUEST
       SSESpecification: { SSEEnabled: true }
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
 
   SpendingPlansTable:
     Type: AWS::DynamoDB::Table
@@ -253,11 +276,8 @@ Resources:
   # ---------------- Lambda functions ----------------
   PlaidLinkCreateFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties: { Minify: false, Target: "node20", EntryPoints: ["index.js"] }
     Properties:
-      CodeUri: functions/plaid-link-create/
+      CodeUri: dist/PlaidLinkCreateFunction/
       Handler: index.handler
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref PlaidItemsTable }
@@ -271,11 +291,8 @@ Resources:
 
   PlaidExchangeTokenFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties: { Minify: false, Target: "node20", EntryPoints: ["index.js"] }
     Properties:
-      CodeUri: functions/plaid-exchange-token/
+      CodeUri: dist/PlaidExchangeTokenFunction/
       Handler: index.handler
       Timeout: 30
       Policies:
@@ -294,11 +311,8 @@ Resources:
 
   PlaidSyncFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties: { Minify: false, Target: "node20", EntryPoints: ["index.js"] }
     Properties:
-      CodeUri: functions/plaid-sync/
+      CodeUri: dist/PlaidSyncFunction/
       Handler: index.handler
       Timeout: 60
       Policies:
@@ -322,11 +336,8 @@ Resources:
 
   AccountsFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties: { Minify: false, Target: "node20", EntryPoints: ["index.js"] }
     Properties:
-      CodeUri: functions/accounts/
+      CodeUri: dist/AccountsFunction/
       Handler: index.handler
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref AccountsTable }
@@ -334,39 +345,33 @@ Resources:
       Events:
         List:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /accounts, Method: get }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/accounts", Method: get }
         History:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /accounts/{accountId}/history, Method: get }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/accounts/{accountId}/history", Method: get }
         Update:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /accounts/{accountId}, Method: put }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/accounts/{accountId}", Method: put }
 
   TransactionsFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties: { Minify: false, Target: "node20", EntryPoints: ["index.js"] }
     Properties:
-      CodeUri: functions/transactions/
+      CodeUri: dist/TransactionsFunction/
       Handler: index.handler
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref TransactionsTable }
       Events:
         List:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /transactions, Method: get }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/transactions", Method: get }
         Categorize:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /transactions/{transactionId}/categorize, Method: post }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/transactions/{transactionId}/categorize", Method: post }
 
   CategoryRulesFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties: { Minify: false, Target: "node20", EntryPoints: ["index.js"] }
     Properties:
-      CodeUri: functions/category-rules/
+      CodeUri: dist/CategoryRulesFunction/
       Handler: index.handler
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref CategoryRulesTable }
@@ -374,27 +379,24 @@ Resources:
       Events:
         List:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /category-rules, Method: get }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/category-rules", Method: get }
         Create:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /category-rules, Method: post }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/category-rules", Method: post }
         Test:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /category-rules/test, Method: post }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/category-rules/test", Method: post }
         Update:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /category-rules/{ruleId}, Method: put }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/category-rules/{ruleId}", Method: put }
         Delete:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /category-rules/{ruleId}, Method: delete }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/category-rules/{ruleId}", Method: delete }
 
   SpendingPlansFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties: { Minify: false, Target: "node20", EntryPoints: ["index.js"] }
     Properties:
-      CodeUri: functions/spending-plans/
+      CodeUri: dist/SpendingPlansFunction/
       Handler: index.handler
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref SpendingPlansTable }
@@ -402,24 +404,21 @@ Resources:
       Events:
         List:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /spending-plans, Method: get }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/spending-plans", Method: get }
         GetOne:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /spending-plans/{payDate}, Method: get }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/spending-plans/{payDate}", Method: get }
         Create:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /spending-plans, Method: post }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/spending-plans", Method: post }
         Update:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /spending-plans/{payDate}, Method: put }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/spending-plans/{payDate}", Method: put }
 
   CashflowFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties: { Minify: false, Target: "node20", EntryPoints: ["index.js"] }
     Properties:
-      CodeUri: functions/cashflow/
+      CodeUri: dist/CashflowFunction/
       Handler: index.handler
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref CashflowEventsTable }
@@ -427,39 +426,33 @@ Resources:
       Events:
         Month:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /cashflow/{year}/{month}, Method: get }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/cashflow/{year}/{month}", Method: get }
         CreateEvent:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /cashflow/events, Method: post }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/cashflow/events", Method: post }
         DeleteEvent:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /cashflow/events/{eventId}, Method: delete }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/cashflow/events/{eventId}", Method: delete }
 
   G1TrackerFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties: { Minify: false, Target: "node20", EntryPoints: ["index.js"] }
     Properties:
-      CodeUri: functions/g1-tracker/
+      CodeUri: dist/G1TrackerFunction/
       Handler: index.handler
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref AccountsTable }
       Events:
         Get:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /g1, Method: get }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/g1", Method: get }
         Reorder:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /g1/order, Method: put }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/g1/order", Method: put }
 
   G2TrackerFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties: { Minify: false, Target: "node20", EntryPoints: ["index.js"] }
     Properties:
-      CodeUri: functions/g2-tracker/
+      CodeUri: dist/G2TrackerFunction/
       Handler: index.handler
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref G2Table }
@@ -467,18 +460,15 @@ Resources:
       Events:
         Get:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /g2, Method: get }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/g2", Method: get }
         Update:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /g2, Method: put }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/g2", Method: put }
 
   G3TrackerFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties: { Minify: false, Target: "node20", EntryPoints: ["index.js"] }
     Properties:
-      CodeUri: functions/g3-tracker/
+      CodeUri: dist/G3TrackerFunction/
       Handler: index.handler
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref G3Table }
@@ -486,66 +476,57 @@ Resources:
       Events:
         Get:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /g3, Method: get }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/g3", Method: get }
         Create:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /g3, Method: post }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/g3", Method: post }
 
   PcsSimulatorFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties: { Minify: false, Target: "node20", EntryPoints: ["index.js"] }
     Properties:
-      CodeUri: functions/pcs-simulator/
+      CodeUri: dist/PcsSimulatorFunction/
       Handler: index.handler
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref PcsSimulationsTable }
       Events:
         List:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /pcs-simulator, Method: get }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/pcs-simulator", Method: get }
         GetOne:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /pcs-simulator/{simulationId}, Method: get }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/pcs-simulator/{simulationId}", Method: get }
         Create:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /pcs-simulator, Method: post }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/pcs-simulator", Method: post }
         Delete:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /pcs-simulator/{simulationId}, Method: delete }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/pcs-simulator/{simulationId}", Method: delete }
 
   TasksFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties: { Minify: false, Target: "node20", EntryPoints: ["index.js"] }
     Properties:
-      CodeUri: functions/tasks/
+      CodeUri: dist/TasksFunction/
       Handler: index.handler
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref TasksTable }
       Events:
         List:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /tasks, Method: get }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/tasks", Method: get }
         Create:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /tasks, Method: post }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/tasks", Method: post }
         Update:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /tasks/{taskId}, Method: put }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/tasks/{taskId}", Method: put }
         Delete:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /tasks/{taskId}, Method: delete }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/tasks/{taskId}", Method: delete }
 
   RentalsProxyFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties: { Minify: false, Target: "node20", EntryPoints: ["index.js"] }
     Properties:
-      CodeUri: functions/rentals-proxy/
+      CodeUri: dist/RentalsProxyFunction/
       Handler: index.handler
       Timeout: 30
       Policies:
@@ -553,15 +534,12 @@ Resources:
       Events:
         Get:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: /rentals, Method: get }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/rentals", Method: get }
 
   RemindersFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties: { Minify: false, Target: "node20", EntryPoints: ["index.js"] }
     Properties:
-      CodeUri: functions/reminders/
+      CodeUri: dist/RemindersFunction/
       Handler: index.handler
       Timeout: 30
       Policies:
