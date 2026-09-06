@@ -239,3 +239,16 @@ export function useSyncPlaid() {
     onSuccess: () => queryClient.invalidateQueries(),
   });
 }
+
+export function useExchangePlaidToken() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ publicToken, institutionId, institutionName }) =>
+      api('/plaid/exchange-token', {
+        method: 'POST',
+        body: { publicToken, institutionId, institutionName },
+      }),
+    onSuccess: () => queryClient.invalidateQueries(),
+  });
+}

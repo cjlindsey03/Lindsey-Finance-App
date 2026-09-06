@@ -1,7 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import BlueprintCard from '../components/BlueprintCard.jsx';
 import PageHeader from '../components/PageHeader.jsx';
-import { useAccounts, useUpdateAccount, useSyncPlaid, usePlaidLinkToken, useG1, useG2, useG3 } from '../api/hooks.js';
+import PlaidLinkButton from '../components/PlaidLinkButton.jsx';
+import {
+  useAccounts,
+  useUpdateAccount,
+  useSyncPlaid,
+  usePlaidLinkToken,
+  useExchangePlaidToken,
+  useG1,
+  useG2,
+  useG3,
+} from '../api/hooks.js';
 import { money, percent } from '../utils/format.js';
 import { buildExportPrompt } from '../utils/exportPrompt.js';
 
@@ -29,7 +39,9 @@ function AccountRow({ account }) {
     <tr>
       <td>
         {account.name}
-        <div className="text-muted" style={{ fontSize: 11 }}>{account.type} · {account.subtype ?? '—'}</div>
+        <div className="text-muted" style={{ fontSize: 11 }}>
+          {account.isManual ? 'Manual' : 'Plaid'} · {account.type} · {account.subtype ?? '—'}
+        </div>
       </td>
       <td>{money(account.currentBalance, { maximumFractionDigits: 2 })}</td>
       <td>{account.utilization != null ? percent(account.utilization, 1) : '—'}</td>
@@ -52,17 +64,55 @@ function AccountRow({ account }) {
 export default function Settings() {
   const { data: accountsData } = useAccounts();
   const syncPlaid = useSyncPlaid();
-  const linkToken = usePlaidLinkToken();
+  const createLinkToken = usePlaidLinkToken();
+  const exchangeToken = useExchangePlaidToken();
   const g1 = useG1();
   const g2 = useG2();
   const g3 = useG3();
   const [copied, setCopied] = useState(false);
+  const [connectStatus, setConnectStatus] = useState(null);
+
+  // A link token is single-use per Link session, so fetch a fresh one as
+  // soon as the page loads and again after every successful connection.
+  useEffect(() => {
+    createLinkToken.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleLinkSuccess = (publicToken, metadata) => {
+    setConnectStatus({ state: 'connecting', institutionName: metadata?.institution?.name });
+    exchangeToken.mutate(
+      {
+        publicToken,
+        institutionId: metadata?.institution?.institution_id,
+        institutionName: metadata?.institution?.name,
+      },
+      {
+        onSuccess: (res) => {
+          setConnectStatus({
+            state: 'connected',
+            institutionName: metadata?.institution?.name,
+            accountCount: res.syncSummary?.[0]?.accountCount ?? 0,
+          });
+          createLinkToken.mutate();
+        },
+        onError: (err) => setConnectStatus({ state: 'error', message: err.message }),
+      }
+    );
+  };
 
   const copyExport = async () => {
     await navigator.clipboard.writeText(buildExportPrompt({ g1: g1.data, g2: g2.data, g3: g3.data }));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  const plaidAccounts = accountsData?.accounts?.filter((a) => !a.isManual) ?? [];
+  const lastSync = plaidAccounts
+    .map((a) => a.lastSynced)
+    .filter(Boolean)
+    .sort()
+    .at(-1);
 
   return (
     <>
@@ -71,21 +121,57 @@ export default function Settings() {
       <BlueprintCard>
         <div className="card-title">Bank Connections</div>
         <p className="card-body">
-          Connect Navy Federal (and any other institution) through Plaid. Balances and transactions then sync
-          automatically each morning.
+          Connect Navy Federal, Capital One, or any other institution through Plaid. Balances and transactions then
+          sync automatically each morning. Some smaller lenders (Ally Financial, Exeter Finance) may not connect
+          cleanly through Plaid — those can stay as manual accounts below instead.
         </p>
-        <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-          <button type="button" className="btn btn-primary" onClick={() => linkToken.mutate()} disabled={linkToken.isPending}>
-            {linkToken.isPending ? 'Preparing…' : 'Connect an Institution'}
-          </button>
+
+        {plaidAccounts.length > 0 && (
+          <p className="text-muted" style={{ fontSize: 12 }}>
+            {plaidAccounts.length} account{plaidAccounts.length === 1 ? '' : 's'} connected via Plaid
+            {lastSync ? ` · last synced ${new Date(lastSync).toLocaleString()}` : ''}
+          </p>
+        )}
+
+        <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
+          {createLinkToken.data?.linkToken ? (
+            <PlaidLinkButton
+              linkToken={createLinkToken.data.linkToken}
+              onSuccess={handleLinkSuccess}
+              disabled={exchangeToken.isPending}
+            >
+              Connect an Institution
+            </PlaidLinkButton>
+          ) : (
+            <button type="button" className="btn btn-primary" disabled>
+              {createLinkToken.isError ? 'Link unavailable' : 'Preparing Link…'}
+            </button>
+          )}
           <button type="button" className="btn btn-secondary" onClick={() => syncPlaid.mutate()} disabled={syncPlaid.isPending}>
             {syncPlaid.isPending ? 'Syncing…' : 'Sync Now'}
           </button>
         </div>
-        {linkToken.data?.linkToken && (
+
+        {createLinkToken.isError && (
+          <p style={{ fontSize: 12, color: 'var(--color-overspend)' }}>
+            Could not reach Plaid: {createLinkToken.error?.message}
+          </p>
+        )}
+
+        {connectStatus?.state === 'connecting' && (
           <p className="text-muted" style={{ fontSize: 12 }}>
-            Link token ready. Plaid Link opens here once the Plaid Link SDK is wired in — for now this confirms the
-            backend can reach Plaid.
+            Connecting {connectStatus.institutionName ?? 'institution'} and pulling initial data…
+          </p>
+        )}
+        {connectStatus?.state === 'connected' && (
+          <p style={{ fontSize: 12, color: 'var(--color-accent)' }}>
+            Connected {connectStatus.institutionName} — {connectStatus.accountCount} account
+            {connectStatus.accountCount === 1 ? '' : 's'} pulled in.
+          </p>
+        )}
+        {connectStatus?.state === 'error' && (
+          <p style={{ fontSize: 12, color: 'var(--color-overspend)' }}>
+            Connection failed: {connectStatus.message}
           </p>
         )}
       </BlueprintCard>
@@ -93,8 +179,8 @@ export default function Settings() {
       <BlueprintCard>
         <div className="card-title">Account Configuration</div>
         <p className="card-body">
-          APR, statement close day, and due day aren't supplied by Plaid — set them here so payment predictions and the
-          snowball projection are accurate.
+          APR, statement close day, and due day are not supplied by Plaid — set them here so payment predictions and
+          the snowball projection are accurate.
         </p>
         {!accountsData?.accounts?.length && <p className="card-body">No accounts yet — connect an institution above.</p>}
         {accountsData?.accounts?.length > 0 && (
