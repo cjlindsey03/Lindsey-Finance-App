@@ -11,6 +11,7 @@ import SpendingPlans from './pages/SpendingPlans.jsx';
 import PcsSimulator from './pages/PcsSimulator.jsx';
 import Tasks from './pages/Tasks.jsx';
 import Rentals from './pages/Rentals.jsx';
+import Reports from './pages/Reports.jsx';
 import Settings from './pages/Settings.jsx';
 import Login from './pages/Login.jsx';
 
@@ -33,6 +34,7 @@ export default function App() {
         <Route path="/pcs-simulator" element={<PcsSimulator />} />
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/rentals" element={<Rentals />} />
+        <Route path="/reports" element={<Reports />} />
         <Route path="/settings" element={<Settings />} />
       </Routes>
     </AppShell>

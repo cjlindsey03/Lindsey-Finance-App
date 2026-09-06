@@ -39,6 +39,8 @@ Globals:
         G3_TABLE: !Ref G3Table
         RENTALS_CACHE_TABLE: !Ref RentalsCacheTable
         RECURRING_BILLS_TABLE: !Ref RecurringBillsTable
+        REPORTS_TABLE: !Ref ReportsTable
+        REPORTS_BUCKET: !Ref ReportsBucket
         REMINDERS_TOPIC_ARN: !Ref RemindersTopic
         RENTCAST_API_KEY: !Ref RentcastApiKey
         COGNITO_USER_POOL_ID: !Ref HouseholdUserPool
@@ -109,6 +111,19 @@ Resources:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: balance_snapshots
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: { SSEEnabled: true }
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+
+  ReportsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: reports
       BillingMode: PAY_PER_REQUEST
       SSESpecification: { SSEEnabled: true }
       AttributeDefinitions:
@@ -271,6 +286,19 @@ Resources:
         Delete:
           Type: HttpApi
           Properties: { ApiId: !Ref HouseholdApi, Path: "/accounts/{accountId}", Method: delete }
+
+  ReportsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dist/ReportsFunction/
+      Handler: index.handler
+      Policies:
+        - DynamoDBReadPolicy: { TableName: !Ref ReportsTable }
+        - S3ReadPolicy: { BucketName: !Ref ReportsBucket }
+      Events:
+        List:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/reports", Method: get }
 
   RecurringBillsFunction:
     Type: AWS::Serverless::Function
@@ -458,6 +486,10 @@ Resources:
         - DynamoDBReadPolicy: { TableName: !Ref AccountsTable }
         - DynamoDBReadPolicy: { TableName: !Ref RecurringBillsTable }
         - DynamoDBCrudPolicy: { TableName: !Ref SpendingPlansTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref ReportsTable }
+        - DynamoDBReadPolicy: { TableName: !Ref G2Table }
+        - DynamoDBReadPolicy: { TableName: !Ref G3Table }
+        - S3WritePolicy: { BucketName: !Ref ReportsBucket }
         - SNSPublishMessagePolicy: { TopicName: !GetAtt RemindersTopic.TopicName }
       Events:
         DailyReminders:
@@ -466,6 +498,18 @@ Resources:
             Schedule: cron(0 12 * * ? *)
 
   # ---------------- Frontend hosting (S3 + CloudFront) ----------------
+  ReportsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
   FrontendBucket:
     Type: AWS::S3::Bucket
     Properties:

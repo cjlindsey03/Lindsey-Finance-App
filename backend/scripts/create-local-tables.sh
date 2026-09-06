@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Creates all 9 tables in DynamoDB Local, matching backend/template.yaml.
+# Creates all 10 tables in DynamoDB Local, matching backend/template.yaml.
 # Requires: docker-compose -f backend/docker-compose.yml up -d (dynamodb-local on :8000)
 set -euo pipefail
 
@@ -50,6 +50,7 @@ create_composite_table g3_tracker
 create_composite_table rentals_cache
 create_simple_table g2_tracker
 create_composite_table recurring_bills
+create_composite_table reports
 
 if table_exists cashflow_events; then echo "exists  cashflow_events"; else
 aws dynamodb create-table \

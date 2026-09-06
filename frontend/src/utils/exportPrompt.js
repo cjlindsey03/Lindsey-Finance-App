@@ -1,6 +1,6 @@
 import { money, percent } from './format.js';
 
-export function buildExportPrompt({ g1, g2, g3 }) {
+export function buildExportPrompt({ g1, g2, g3, cashflow, plan, period }) {
   const g1Queue = (g1?.accounts ?? [])
     .map((a) => `${a.name} ${money(a.balance)} @ ${a.apr}%`)
     .join(' → ');
@@ -9,7 +9,29 @@ export function buildExportPrompt({ g1, g2, g3 }) {
     .map(([userId, record]) => `${userId}: best FICO ${record.bestScore || '—'}`)
     .join('\n');
 
+  const allocations = Object.entries(plan?.allocations ?? {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([category, amount]) => `  ${category}: ${money(amount)}`)
+    .join('\n');
+
+  const planSection = plan
+    ? `Committed plan: ${plan.label} — grade ${plan.score}
+${percent(plan.scoreBreakdown?.debtContributionPct, 1)} to debt + ${percent(plan.scoreBreakdown?.savingsContributionPct, 1)} to savings = ${percent(plan.scoreBreakdown?.combinedPct, 1)} of income
+Income this period: ${money(plan.income)}
+Allocations:
+${allocations || '  (none)'}`
+    : 'No plan committed for the current pay period.';
+
   return `---HOUSEHOLD FINANCIAL SNAPSHOT (${new Date().toLocaleDateString()})---
+
+CASH FLOW (this month)
+Income: ${money(cashflow?.totalIncome)}
+Bills: ${money(cashflow?.totalBills)}
+Net: ${money(cashflow?.netFlow)}
+Tightest point: ${cashflow?.lowestPointDate ?? '—'} at ${money(cashflow?.lowestNetPosition)}
+
+SPENDING PLAN (${period?.periodStart ?? '—'} to ${period?.periodEnd ?? '—'})
+${planSection}
 
 GOAL 1 — REVOLVING DEBT (Snowball)
 Total Remaining: ${money(g1?.totalBalance)}

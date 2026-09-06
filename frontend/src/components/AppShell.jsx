@@ -27,6 +27,7 @@ const NAV_GROUPS = [
       { to: '/pcs-simulator', label: 'PCS Simulator', icon: 'truck' },
       { to: '/tasks', label: 'Tasks', icon: 'check' },
       { to: '/rentals', label: 'Rentals', icon: 'building' },
+      { to: '/reports', label: 'Reports', icon: 'list' },
     ],
   },
   {

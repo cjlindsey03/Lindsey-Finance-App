@@ -28,8 +28,9 @@ async function main() {
       target: 'node22',
       format: 'cjs',
       outfile: path.join(outdir, 'index.js'),
-      // Provided by the Lambda Node 20 runtime — no need to ship them.
-      external: ['@aws-sdk/*'],
+      // The Lambda runtime ships the DynamoDB/SNS clients, but not the S3
+      // ones — those get bundled so the report Lambdas actually have them.
+      external: ['@aws-sdk/client-dynamodb', '@aws-sdk/lib-dynamodb', '@aws-sdk/client-sns'],
       logLevel: 'warning',
     });
     console.log(`bundled ${dir} -> dist/${toLogicalId(dir)}/index.js`);

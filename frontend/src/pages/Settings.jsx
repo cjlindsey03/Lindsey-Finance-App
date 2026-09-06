@@ -9,6 +9,8 @@ import {
   useG1,
   useG2,
   useG3,
+  useCashflow,
+  useSpendingPlans,
 } from '../api/hooks.js';
 import { money, percent } from '../utils/format.js';
 import { buildExportPrompt } from '../utils/exportPrompt.js';
@@ -74,11 +76,25 @@ export default function Settings() {
   const g1 = useG1();
   const g2 = useG2();
   const g3 = useG3();
+  const today = new Date();
+  const cashflow = useCashflow(today.getFullYear(), today.getMonth() + 1);
+  const { data: plansData } = useSpendingPlans();
   const [copied, setCopied] = useState(false);
   const [newAccount, setNewAccount] = useState(EMPTY_ACCOUNT);
 
   const copyExport = async () => {
-    await navigator.clipboard.writeText(buildExportPrompt({ g1: g1.data, g2: g2.data, g3: g3.data }));
+    const period = plansData?.currentPeriod;
+    const committedPlan = (plansData?.committed ?? []).find((p) => p.periodKey === period?.periodKey) ?? null;
+    await navigator.clipboard.writeText(
+      buildExportPrompt({
+        g1: g1.data,
+        g2: g2.data,
+        g3: g3.data,
+        cashflow: cashflow.data,
+        plan: committedPlan,
+        period,
+      })
+    );
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -186,7 +202,8 @@ export default function Settings() {
       <BlueprintCard>
         <div className="card-title">Export for Claude</div>
         <p className="card-body">
-          Copies a full household snapshot to your clipboard, formatted to paste into a Claude chat for advice.
+          Copies a full household snapshot — cash flow, the committed spending plan, and all three goals — to your
+          clipboard, formatted to paste into a Claude chat for advice.
         </p>
         <button type="button" className="btn btn-primary" style={{ alignSelf: 'flex-start' }} onClick={copyExport}>
           {copied ? 'Copied' : 'Copy Snapshot'}

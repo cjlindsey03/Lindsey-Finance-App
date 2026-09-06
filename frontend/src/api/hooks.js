@@ -209,6 +209,13 @@ export function useRentals(filters = {}) {
   });
 }
 
+// Report URLs are presigned and short-lived, so don't serve them from a stale
+// cache — refetch when the page is revisited.
+export function useReports() {
+  const api = useApi();
+  return useQuery({ queryKey: ['reports'], queryFn: () => api('/reports'), staleTime: 0 });
+}
+
 export function useRecurringBills() {
   const api = useApi();
   return useQuery({ queryKey: ['recurring-bills'], queryFn: () => api('/recurring-bills') });
