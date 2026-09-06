@@ -1,0 +1,35 @@
+# Personal/PII documents — never commit
+Charles LES.pdf
+myFICO*.pdf
+V Paystub *.jpg
+Financial Account Status.md
+
+# Node
+node_modules/
+dist/
+build/
+.pnp
+.pnp.js
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+env.local.json
+!env.local.json.example
+
+# AWS
+.aws-sam/
+cdk.out/
+samconfig.toml
+
+# Editor/OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

@@ -1,0 +1,312 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Lindsey household financial dashboard — API, data, and scheduled jobs
+
+Parameters:
+  PlaidClientId:
+    Type: String
+    NoEcho: true
+  PlaidSecret:
+    Type: String
+    NoEcho: true
+  PlaidEnv:
+    Type: String
+    Default: sandbox
+    AllowedValues: [sandbox, development, production]
+  RentcastApiKey:
+    Type: String
+    NoEcho: true
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 15
+    MemorySize: 256
+    Environment:
+      Variables:
+        DYNAMODB_REGION: !Ref AWS::Region
+        ACCOUNTS_TABLE: !Ref AccountsTable
+        PLAID_ITEMS_TABLE: !Ref PlaidItemsTable
+        BALANCE_SNAPSHOTS_TABLE: !Ref BalanceSnapshotsTable
+        TRANSACTIONS_TABLE: !Ref TransactionsTable
+        CATEGORY_RULES_TABLE: !Ref CategoryRulesTable
+        SPENDING_PLANS_TABLE: !Ref SpendingPlansTable
+        PCS_SIMULATIONS_TABLE: !Ref PcsSimulationsTable
+        TASKS_TABLE: !Ref TasksTable
+        CASHFLOW_EVENTS_TABLE: !Ref CashflowEventsTable
+        G2_TABLE: !Ref G2Table
+        G3_TABLE: !Ref G3Table
+        REMINDERS_TOPIC_ARN: !Ref RemindersTopic
+        PLAID_CLIENT_ID: !Ref PlaidClientId
+        PLAID_SECRET: !Ref PlaidSecret
+        PLAID_ENV: !Ref PlaidEnv
+        RENTCAST_API_KEY: !Ref RentcastApiKey
+        COGNITO_USER_POOL_ID: !Ref HouseholdUserPool
+
+Resources:
+  # ---------------- Cognito ----------------
+  HouseholdUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: household-pool
+      AutoVerifiedAttributes: [email]
+      Schema:
+        - Name: householdId
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 10
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+
+  HouseholdUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref HouseholdUserPool
+      ClientName: household-spa
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+  # ---------------- API Gateway ----------------
+  HouseholdApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Auth:
+        Authorizers:
+          CognitoAuthorizer:
+            JwtConfiguration:
+              issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${HouseholdUserPool}
+              audience:
+                - !Ref HouseholdUserPoolClient
+            IdentitySource: $request.header.Authorization
+        DefaultAuthorizer: CognitoAuthorizer
+
+  # ---------------- DynamoDB tables ----------------
+  AccountsTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      TableName: accounts
+      PrimaryKey: { Name: PK, Type: String }
+      SSESpecification: { SSEEnabled: true }
+
+  PlaidItemsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: plaid_items
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: { SSEEnabled: true }
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+
+  BalanceSnapshotsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: balance_snapshots
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: { SSEEnabled: true }
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+
+  TransactionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: transactions
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: { SSEEnabled: true }
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+        - { AttributeName: accountId, AttributeType: S }
+        - { AttributeName: date, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+      GlobalSecondaryIndexes:
+        - IndexName: accountId-date-index
+          KeySchema:
+            - { AttributeName: accountId, KeyType: HASH }
+            - { AttributeName: date, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+
+  CategoryRulesTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      TableName: category_rules
+      PrimaryKey: { Name: PK, Type: String }
+      SSESpecification: { SSEEnabled: true }
+
+  SpendingPlansTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: spending_plans
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: { SSEEnabled: true }
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+
+  PcsSimulationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: pcs_simulations
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: { SSEEnabled: true }
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+
+  TasksTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: tasks
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: { SSEEnabled: true }
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+
+  CashflowEventsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: cashflow_events
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: { SSEEnabled: true }
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+        - { AttributeName: eventDate, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+      GlobalSecondaryIndexes:
+        - IndexName: householdId-eventDate-index
+          KeySchema:
+            - { AttributeName: PK, KeyType: HASH }
+            - { AttributeName: eventDate, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+
+  G2Table:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      TableName: g2_tracker
+      PrimaryKey: { Name: PK, Type: String }
+      SSESpecification: { SSEEnabled: true }
+
+  G3Table:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: g3_tracker
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: { SSEEnabled: true }
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+
+  # ---------------- SNS ----------------
+  RemindersTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: household-reminders
+
+  # ---------------- Lambda functions ----------------
+  PlaidLinkCreateFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties: { Minify: false, Target: "node20", EntryPoints: ["index.js"] }
+    Properties:
+      CodeUri: functions/plaid-link-create/
+      Handler: index.handler
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref PlaidItemsTable }
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HouseholdApi
+            Path: /plaid/link-token
+            Method: post
+
+  PlaidExchangeTokenFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties: { Minify: false, Target: "node20", EntryPoints: ["index.js"] }
+    Properties:
+      CodeUri: functions/plaid-exchange-token/
+      Handler: index.handler
+      Timeout: 30
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref PlaidItemsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref AccountsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref TransactionsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref BalanceSnapshotsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref CategoryRulesTable }
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HouseholdApi
+            Path: /plaid/exchange-token
+            Method: post
+
+  PlaidSyncFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties: { Minify: false, Target: "node20", EntryPoints: ["index.js"] }
+    Properties:
+      CodeUri: functions/plaid-sync/
+      Handler: index.handler
+      Timeout: 60
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref PlaidItemsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref AccountsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref TransactionsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref BalanceSnapshotsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref CategoryRulesTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref CashflowEventsTable }
+      Events:
+        DailySync:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 6 * * ? *)
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HouseholdApi
+            Path: /plaid/sync
+            Method: post
+
+Outputs:
+  ApiUrl:
+    Value: !Sub https://${HouseholdApi}.execute-api.${AWS::Region}.amazonaws.com
+  UserPoolId:
+    Value: !Ref HouseholdUserPool
+  UserPoolClientId:
+    Value: !Ref HouseholdUserPoolClient

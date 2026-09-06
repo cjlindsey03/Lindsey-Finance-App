@@ -1,0 +1,10 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /plaid/link-token",
+  "rawPath": "/plaid/link-token",
+  "requestContext": {
+    "http": { "method": "POST", "path": "/plaid/link-token" }
+  },
+  "body": "{}",
+  "isBase64Encoded": false
+}

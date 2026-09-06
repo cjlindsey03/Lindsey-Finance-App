@@ -1,0 +1,15 @@
+{
+  "name": "lindsey-finance-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lambda functions for the Lindsey household financial dashboard",
+  "scripts": {
+    "local-api": "sam local start-api --env-vars env.local.json --docker-network sam-local",
+    "build": "sam build"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.600.0",
+    "@aws-sdk/lib-dynamodb": "^3.600.0",
+    "plaid": "^27.0.0"
+  }
+}
