@@ -46,30 +46,31 @@ export default function Cashflow() {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-4)' }}>
         <BlueprintCard style={{ gap: 'var(--space-2)' }}>
-          <div className="card-kicker">{monthLabel} · Starting Balance</div>
-          <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 26 }}>
-            {money(data?.startingBalance)}
+          <div className="card-kicker">{monthLabel} · Income</div>
+          <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 26, color: 'var(--color-accent)' }}>
+            {money(data?.totalIncome)}
           </div>
-          <div className="text-muted" style={{ fontSize: 11 }}>Live from Plaid checking</div>
         </BlueprintCard>
         <BlueprintCard style={{ gap: 'var(--space-2)' }}>
-          <div className="card-kicker">Lowest Point</div>
-          <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 26 }}>
-            {money(data?.lowestPointBalance)}
+          <div className="card-kicker">Bills</div>
+          <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 26, color: 'var(--color-overspend)' }}>
+            {money(data?.totalBills)}
           </div>
-          <div className="text-muted" style={{ fontSize: 11 }}>{shortDate(data?.lowestPointDate)}</div>
         </BlueprintCard>
         <BlueprintCard style={{ gap: 'var(--space-2)' }}>
-          <div className="card-kicker">Negative Days</div>
+          <div className="card-kicker">Net for the month</div>
           <div
             style={{
               fontFamily: 'var(--font-heading)',
               fontWeight: 600,
               fontSize: 26,
-              color: data?.negativeDays?.length ? 'var(--color-overspend)' : 'inherit',
+              color: (data?.netFlow ?? 0) < 0 ? 'var(--color-overspend)' : 'inherit',
             }}
           >
-            {data?.negativeDays?.length ?? 0}
+            {money(data?.netFlow)}
+          </div>
+          <div className="text-muted" style={{ fontSize: 11 }}>
+            Tightest: {shortDate(data?.lowestPointDate)} · {money(data?.lowestNetPosition)}
           </div>
         </BlueprintCard>
       </div>
@@ -87,7 +88,7 @@ export default function Cashflow() {
                   <th>Description</th>
                   <th>Type</th>
                   <th>Amount</th>
-                  <th>Running</th>
+                  <th>Net so far</th>
                   <th />
                 </tr>
               </thead>
@@ -100,7 +101,7 @@ export default function Cashflow() {
                     <td style={{ color: event.amount < 0 ? 'var(--color-overspend)' : 'var(--color-accent)' }}>
                       {money(event.amount)}
                     </td>
-                    <td className="text-muted">{money(data.dailyRunningBalance[event.eventDate])}</td>
+                    <td className="text-muted">{money(data.dailyNetPosition[event.eventDate])}</td>
                     <td>
                       {event.source === 'manual' && (
                         <button type="button" className="btn btn-ghost" onClick={() => deleteEvent.mutate(event.eventId)}>

@@ -3,16 +3,6 @@ Transform: AWS::Serverless-2016-10-31
 Description: Lindsey household financial dashboard — API, data, and scheduled jobs
 
 Parameters:
-  PlaidClientId:
-    Type: String
-    NoEcho: true
-  PlaidSecret:
-    Type: String
-    NoEcho: true
-  PlaidEnv:
-    Type: String
-    Default: sandbox
-    AllowedValues: [sandbox, development, production]
   RentcastApiKey:
     Type: String
     NoEcho: true
@@ -40,10 +30,7 @@ Globals:
         # Empty in AWS; set to DynamoDB Local by env.local.json for `sam local`.
         DYNAMODB_LOCAL_ENDPOINT: ""
         ACCOUNTS_TABLE: !Ref AccountsTable
-        PLAID_ITEMS_TABLE: !Ref PlaidItemsTable
         BALANCE_SNAPSHOTS_TABLE: !Ref BalanceSnapshotsTable
-        TRANSACTIONS_TABLE: !Ref TransactionsTable
-        CATEGORY_RULES_TABLE: !Ref CategoryRulesTable
         SPENDING_PLANS_TABLE: !Ref SpendingPlansTable
         PCS_SIMULATIONS_TABLE: !Ref PcsSimulationsTable
         TASKS_TABLE: !Ref TasksTable
@@ -53,9 +40,6 @@ Globals:
         RENTALS_CACHE_TABLE: !Ref RentalsCacheTable
         RECURRING_BILLS_TABLE: !Ref RecurringBillsTable
         REMINDERS_TOPIC_ARN: !Ref RemindersTopic
-        PLAID_CLIENT_ID: !Ref PlaidClientId
-        PLAID_SECRET: !Ref PlaidSecret
-        PLAID_ENV: !Ref PlaidEnv
         RENTCAST_API_KEY: !Ref RentcastApiKey
         COGNITO_USER_POOL_ID: !Ref HouseholdUserPool
 
@@ -121,57 +105,10 @@ Resources:
         - { AttributeName: PK, KeyType: HASH }
         - { AttributeName: SK, KeyType: RANGE }
 
-  PlaidItemsTable:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      TableName: plaid_items
-      BillingMode: PAY_PER_REQUEST
-      SSESpecification: { SSEEnabled: true }
-      AttributeDefinitions:
-        - { AttributeName: PK, AttributeType: S }
-        - { AttributeName: SK, AttributeType: S }
-      KeySchema:
-        - { AttributeName: PK, KeyType: HASH }
-        - { AttributeName: SK, KeyType: RANGE }
-
   BalanceSnapshotsTable:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: balance_snapshots
-      BillingMode: PAY_PER_REQUEST
-      SSESpecification: { SSEEnabled: true }
-      AttributeDefinitions:
-        - { AttributeName: PK, AttributeType: S }
-        - { AttributeName: SK, AttributeType: S }
-      KeySchema:
-        - { AttributeName: PK, KeyType: HASH }
-        - { AttributeName: SK, KeyType: RANGE }
-
-  TransactionsTable:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      TableName: transactions
-      BillingMode: PAY_PER_REQUEST
-      SSESpecification: { SSEEnabled: true }
-      AttributeDefinitions:
-        - { AttributeName: PK, AttributeType: S }
-        - { AttributeName: SK, AttributeType: S }
-        - { AttributeName: accountId, AttributeType: S }
-        - { AttributeName: date, AttributeType: S }
-      KeySchema:
-        - { AttributeName: PK, KeyType: HASH }
-        - { AttributeName: SK, KeyType: RANGE }
-      GlobalSecondaryIndexes:
-        - IndexName: accountId-date-index
-          KeySchema:
-            - { AttributeName: accountId, KeyType: HASH }
-            - { AttributeName: date, KeyType: RANGE }
-          Projection: { ProjectionType: ALL }
-
-  CategoryRulesTable:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      TableName: category_rules
       BillingMode: PAY_PER_REQUEST
       SSESpecification: { SSEEnabled: true }
       AttributeDefinitions:
@@ -310,66 +247,6 @@ Resources:
       Endpoint: !Ref VictoriaPhoneNumber
 
   # ---------------- Lambda functions ----------------
-  PlaidLinkCreateFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: dist/PlaidLinkCreateFunction/
-      Handler: index.handler
-      Policies:
-        - DynamoDBCrudPolicy: { TableName: !Ref PlaidItemsTable }
-      Events:
-        Api:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref HouseholdApi
-            Path: /plaid/link-token
-            Method: post
-
-  PlaidExchangeTokenFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: dist/PlaidExchangeTokenFunction/
-      Handler: index.handler
-      Timeout: 30
-      Policies:
-        - DynamoDBCrudPolicy: { TableName: !Ref PlaidItemsTable }
-        - DynamoDBCrudPolicy: { TableName: !Ref AccountsTable }
-        - DynamoDBCrudPolicy: { TableName: !Ref TransactionsTable }
-        - DynamoDBCrudPolicy: { TableName: !Ref BalanceSnapshotsTable }
-        - DynamoDBCrudPolicy: { TableName: !Ref CategoryRulesTable }
-      Events:
-        Api:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref HouseholdApi
-            Path: /plaid/exchange-token
-            Method: post
-
-  PlaidSyncFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: dist/PlaidSyncFunction/
-      Handler: index.handler
-      Timeout: 60
-      Policies:
-        - DynamoDBCrudPolicy: { TableName: !Ref PlaidItemsTable }
-        - DynamoDBCrudPolicy: { TableName: !Ref AccountsTable }
-        - DynamoDBCrudPolicy: { TableName: !Ref TransactionsTable }
-        - DynamoDBCrudPolicy: { TableName: !Ref BalanceSnapshotsTable }
-        - DynamoDBCrudPolicy: { TableName: !Ref CategoryRulesTable }
-        - DynamoDBCrudPolicy: { TableName: !Ref CashflowEventsTable }
-      Events:
-        DailySync:
-          Type: Schedule
-          Properties:
-            Schedule: cron(0 6 * * ? *)
-        Api:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref HouseholdApi
-            Path: /plaid/sync
-            Method: post
-
   AccountsFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -377,7 +254,7 @@ Resources:
       Handler: index.handler
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref AccountsTable }
-        - DynamoDBReadPolicy: { TableName: !Ref BalanceSnapshotsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref BalanceSnapshotsTable }
       Events:
         List:
           Type: HttpApi
@@ -385,49 +262,15 @@ Resources:
         History:
           Type: HttpApi
           Properties: { ApiId: !Ref HouseholdApi, Path: "/accounts/{accountId}/history", Method: get }
+        Create:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/accounts", Method: post }
         Update:
           Type: HttpApi
           Properties: { ApiId: !Ref HouseholdApi, Path: "/accounts/{accountId}", Method: put }
-
-  TransactionsFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: dist/TransactionsFunction/
-      Handler: index.handler
-      Policies:
-        - DynamoDBCrudPolicy: { TableName: !Ref TransactionsTable }
-      Events:
-        List:
-          Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: "/transactions", Method: get }
-        Categorize:
-          Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: "/transactions/{transactionId}/categorize", Method: post }
-
-  CategoryRulesFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: dist/CategoryRulesFunction/
-      Handler: index.handler
-      Policies:
-        - DynamoDBCrudPolicy: { TableName: !Ref CategoryRulesTable }
-        - DynamoDBReadPolicy: { TableName: !Ref TransactionsTable }
-      Events:
-        List:
-          Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: "/category-rules", Method: get }
-        Create:
-          Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: "/category-rules", Method: post }
-        Test:
-          Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: "/category-rules/test", Method: post }
-        Update:
-          Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: "/category-rules/{ruleId}", Method: put }
         Delete:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: "/category-rules/{ruleId}", Method: delete }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/accounts/{accountId}", Method: delete }
 
   RecurringBillsFunction:
     Type: AWS::Serverless::Function
@@ -457,20 +300,28 @@ Resources:
       Handler: index.handler
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref SpendingPlansTable }
-        - DynamoDBReadPolicy: { TableName: !Ref TransactionsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref AccountsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref BalanceSnapshotsTable }
+        - DynamoDBReadPolicy: { TableName: !Ref G2Table }
       Events:
         List:
           Type: HttpApi
           Properties: { ApiId: !Ref HouseholdApi, Path: "/spending-plans", Method: get }
         GetOne:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: "/spending-plans/{payDate}", Method: get }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/spending-plans/{planId}", Method: get }
         Create:
           Type: HttpApi
           Properties: { ApiId: !Ref HouseholdApi, Path: "/spending-plans", Method: post }
         Update:
           Type: HttpApi
-          Properties: { ApiId: !Ref HouseholdApi, Path: "/spending-plans/{payDate}", Method: put }
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/spending-plans/{planId}", Method: put }
+        Delete:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/spending-plans/{planId}", Method: delete }
+        Commit:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/spending-plans/{planId}/commit", Method: post }
 
   CashflowFunction:
     Type: AWS::Serverless::Function
@@ -605,6 +456,8 @@ Resources:
       Policies:
         - DynamoDBReadPolicy: { TableName: !Ref CashflowEventsTable }
         - DynamoDBReadPolicy: { TableName: !Ref AccountsTable }
+        - DynamoDBReadPolicy: { TableName: !Ref RecurringBillsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref SpendingPlansTable }
         - SNSPublishMessagePolicy: { TopicName: !GetAtt RemindersTopic.TopicName }
       Events:
         DailyReminders:

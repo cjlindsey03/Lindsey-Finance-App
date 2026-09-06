@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Creates all 12 tables in DynamoDB Local, matching backend/template.yaml.
+# Creates all 9 tables in DynamoDB Local, matching backend/template.yaml.
 # Requires: docker-compose -f backend/docker-compose.yml up -d (dynamodb-local on :8000)
 set -euo pipefail
 
@@ -42,7 +42,6 @@ create_composite_table() {
 }
 
 create_composite_table accounts
-create_composite_table plaid_items
 create_composite_table balance_snapshots
 create_composite_table spending_plans
 create_composite_table pcs_simulations
@@ -50,19 +49,7 @@ create_composite_table tasks
 create_composite_table g3_tracker
 create_composite_table rentals_cache
 create_simple_table g2_tracker
-create_composite_table category_rules
 create_composite_table recurring_bills
-
-if table_exists transactions; then echo "exists  transactions"; else
-aws dynamodb create-table \
-  --endpoint-url "$ENDPOINT" --region "$REGION" \
-  --table-name transactions \
-  --attribute-definitions AttributeName=PK,AttributeType=S AttributeName=SK,AttributeType=S AttributeName=accountId,AttributeType=S AttributeName=date,AttributeType=S \
-  --key-schema AttributeName=PK,KeyType=HASH AttributeName=SK,KeyType=RANGE \
-  --global-secondary-indexes '[{"IndexName":"accountId-date-index","KeySchema":[{"AttributeName":"accountId","KeyType":"HASH"},{"AttributeName":"date","KeyType":"RANGE"}],"Projection":{"ProjectionType":"ALL"}}]' \
-  --billing-mode PAY_PER_REQUEST \
-  >/dev/null && echo "created transactions"
-fi
 
 if table_exists cashflow_events; then echo "exists  cashflow_events"; else
 aws dynamodb create-table \

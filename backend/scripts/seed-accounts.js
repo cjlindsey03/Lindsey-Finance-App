@@ -1,6 +1,6 @@
-// Seeds the household's known accounts, recurring bills, and a starter
-// spending plan, so the trackers work before Plaid is connected. Plaid-linked
-// accounts replace the manual accounts once each institution is linked.
+// Seeds the household's accounts, recurring bills, and a starter committed
+// spending plan. Every account is hand-maintained; balances move when a
+// spending plan is committed or edited in Settings.
 // Usage: node scripts/seed-accounts.js [--local]
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
 const { DynamoDBDocumentClient, PutCommand, ScanCommand, DeleteCommand } = require('@aws-sdk/lib-dynamodb');
@@ -40,7 +40,7 @@ const ACCOUNTS = [
     currentBalance: 12013.61, apr: 19.59, minimumPayment: 334.82, dueDay: 19, isG1Target: false },
   { id: 'manual_career_starter', name: 'Navy Fed Career Starter Loan', type: 'loan', subtype: 'personal',
     currentBalance: 22473.91, apr: 2.99, minimumPayment: 461.39, dueDay: 15, isG1Target: false },
-  // Deposit accounts. Checking balance is replaced by Plaid once linked.
+  // Deposit accounts.
   { id: 'manual_joint_savings', name: 'Joint Savings', type: 'savings', subtype: 'savings',
     currentBalance: 1000, isG1Target: false },
   { id: 'manual_joint_checking', name: 'Joint Checking', type: 'checking', subtype: 'checking',
@@ -68,7 +68,10 @@ const RECURRING_BILLS = [
 // from the bills above the same way the frontend's auto-fill will compute
 // them (bills with day 15-28 land in this period).
 const STARTER_PLAN = {
-  payDate: '2026-09-15',
+  planId: 'starter-2026-09-15',
+  periodKey: '2026-09-15',
+  periodStart: '2026-09-15',
+  periodEnd: '2026-09-30',
   label: 'Sep 15 Plan',
   income: 2098.84,
   allocations: { Phone: 346, Childcare: 300, Debt_Payment: 1163.94 },
@@ -99,7 +102,7 @@ async function main() {
         minimumPayment: a.minimumPayment ?? null,
         statementCloseDay: a.statementCloseDay ?? null, dueDay: a.dueDay ?? null,
         isG1Target: a.isG1Target, g1Order: a.g1Order ?? null,
-        isActive: true, isManual: true, lastSynced: null,
+        isActive: true,
       },
     }));
   }
@@ -117,14 +120,36 @@ async function main() {
   }
   console.log(`seeded ${RECURRING_BILLS.length} recurring bills`);
 
-  // Clean up the old recurring#* rows this script used to write directly
-  // into cashflow_events, back before recurring bills got their own table.
+  // Clean up rows left behind by earlier versions: the recurring#* templates
+  // that predate the recurring_bills table, the fake sandbox accounts Plaid
+  // created, and Plaid's predicted-payment cashflow events (which the old
+  // delete guard made unremovable through the API).
   const cashflowEvents = await scanAll('cashflow_events');
-  const staleRecurring = cashflowEvents.filter((e) => typeof e.SK === 'string' && e.SK.startsWith('recurring#'));
-  for (const row of staleRecurring) {
+  const staleEvents = cashflowEvents.filter(
+    (e) => (typeof e.SK === 'string' && e.SK.startsWith('recurring#')) || e.source === 'plaid'
+  );
+  for (const row of staleEvents) {
     await doc.send(new DeleteCommand({ TableName: 'cashflow_events', Key: { PK: row.PK, SK: row.SK } }));
   }
-  if (staleRecurring.length) console.log(`removed ${staleRecurring.length} stale recurring# rows from cashflow_events`);
+  if (staleEvents.length) console.log(`removed ${staleEvents.length} stale rows from cashflow_events`);
+
+  // Plans written before drafts existed have no `status`, so the API can no
+  // longer see them — remove them rather than leaving invisible rows behind.
+  const allPlans = await scanAll('spending_plans');
+  const legacyPlans = allPlans.filter((p) => !p.status);
+  for (const row of legacyPlans) {
+    await doc.send(new DeleteCommand({ TableName: 'spending_plans', Key: { PK: row.PK, SK: row.SK } }));
+  }
+  if (legacyPlans.length) console.log(`removed ${legacyPlans.length} pre-draft spending plan rows`);
+
+  const allAccounts = await scanAll('accounts');
+  const plaidAccounts = allAccounts.filter(
+    (a) => a.isManual === false || (typeof a.name === 'string' && a.name.startsWith('Plaid '))
+  );
+  for (const row of plaidAccounts) {
+    await doc.send(new DeleteCommand({ TableName: 'accounts', Key: { PK: row.PK, SK: row.SK } }));
+  }
+  if (plaidAccounts.length) console.log(`removed ${plaidAccounts.length} Plaid-created accounts`);
 
   await doc.send(new PutCommand({
     TableName: 'g2_tracker',
@@ -137,16 +162,25 @@ async function main() {
   await doc.send(new PutCommand({
     TableName: 'spending_plans',
     Item: {
-      PK: HOUSEHOLD_ID, SK: STARTER_PLAN.payDate,
+      PK: HOUSEHOLD_ID, SK: STARTER_PLAN.planId,
+      status: 'committed',
+      periodKey: STARTER_PLAN.periodKey,
+      periodStart: STARTER_PLAN.periodStart,
+      periodEnd: STARTER_PLAN.periodEnd,
       label: STARTER_PLAN.label, income: STARTER_PLAN.income, allocations: STARTER_PLAN.allocations,
       notes: STARTER_PLAN.notes, g1Extra: STARTER_PLAN.g1Extra, g2Allocation: STARTER_PLAN.g2Allocation,
       // Matches scorePlan() in backend/functions/spending-plans/index.js:
       // debt (1163.94+0)/2098.84=55.5%, savings 250/2098.84=11.9%, combined 67.4% -> A.
-      score: 'A', scoreBreakdown: { debtContributionPct: 55.5, savingsContributionPct: 11.9, combinedPct: 67.4 },
-      createdAt: now, updatedAt: now,
+      score: 'A',
+      scoreBreakdown: {
+        debtContributionPct: 55.5, savingsContributionPct: 11.9, combinedPct: 67.4,
+        nextGrade: null, amountToNextGrade: null,
+      },
+      accountPayments: {}, savingsAmount: 0,
+      committedAt: now, createdAt: now, updatedAt: now,
     },
   }));
-  console.log(`seeded starter spending plan for ${STARTER_PLAN.payDate}`);
+  console.log(`seeded starter spending plan for ${STARTER_PLAN.periodKey}`);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

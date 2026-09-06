@@ -1,22 +1,25 @@
 const { queryByPK } = require('./db');
+const { currentPeriod } = require('./payPeriod');
 
 const SPENDING_PLANS_TABLE = process.env.SPENDING_PLANS_TABLE;
 
-// The "active" plan is the most recent one whose pay date has already
-// started; if none has started yet (all plans are future-dated), fall back
-// to the most recently created plan so a newly-scheduled plan still drives
-// G1/G2 ahead of its pay date.
+const toPublicPlan = ({ PK, SK, ...rest }) => ({ planId: SK, ...rest });
+
+// Only a *committed* plan drives the goals — drafts are hypotheticals. Prefer
+// the plan committed for the current pay period; otherwise fall back to the
+// most recently committed one so G1/G2 keep showing something sensible
+// between periods.
 async function getActivePlan(householdId) {
   const plans = await queryByPK(SPENDING_PLANS_TABLE, householdId);
-  if (!plans.length) return null;
+  const committed = plans.filter((p) => p.status === 'committed');
+  if (!committed.length) return null;
 
-  const todayIso = new Date().toISOString().slice(0, 10);
-  const started = plans.filter((p) => p.SK <= todayIso).sort((a, b) => b.SK.localeCompare(a.SK));
-  const fallback = [...plans].sort((a, b) => b.SK.localeCompare(a.SK))[0];
+  const { periodKey } = currentPeriod();
+  const forThisPeriod = committed.find((p) => p.periodKey === periodKey);
+  if (forThisPeriod) return toPublicPlan(forThisPeriod);
 
-  const plan = started[0] ?? fallback;
-  const { PK, SK, ...rest } = plan;
-  return { payDate: SK, ...rest };
+  const mostRecent = committed.sort((a, b) => (b.periodKey ?? '').localeCompare(a.periodKey ?? ''))[0];
+  return toPublicPlan(mostRecent);
 }
 
-module.exports = { getActivePlan };
+module.exports = { getActivePlan, toPublicPlan };

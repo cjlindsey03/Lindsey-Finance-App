@@ -5,38 +5,55 @@ const { ok } = require('../../shared/http');
 const RENTALS_CACHE_TABLE = process.env.RENTALS_CACHE_TABLE;
 const RENTCAST_API_KEY = process.env.RENTCAST_API_KEY;
 
-// Camp Lejeune / Jacksonville NC area.
-const ZIP_CODES = ['28540', '28541', '28546', '28547'];
+// Camp Lejeune, NC — searched as a radius rather than a zip list so one API
+// call covers Jacksonville and the surrounding towns (RentCast's free tier is
+// request-capped, and the old version burned four calls per search).
+const CAMP_LEJEUNE = { latitude: 34.6084, longitude: -77.4419 };
+const SEARCH_RADIUS_MILES = 50;
+const MIN_BEDROOMS = 4;
+const MAX_RENT = 2300;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
-async function fetchListings(zipCode, { bedrooms, bathrooms, maxRent }) {
+async function fetchListings({ minBedrooms, maxRent }) {
   const url = new URL('https://api.rentcast.io/v1/listings/rental/long-term');
-  url.searchParams.set('zipCode', zipCode);
+  url.searchParams.set('latitude', CAMP_LEJEUNE.latitude);
+  url.searchParams.set('longitude', CAMP_LEJEUNE.longitude);
+  url.searchParams.set('radius', SEARCH_RADIUS_MILES);
+  url.searchParams.set('propertyType', 'Single Family');
   url.searchParams.set('status', 'Active');
-  if (bedrooms) url.searchParams.set('bedrooms', bedrooms);
-  if (bathrooms) url.searchParams.set('bathrooms', bathrooms);
+  url.searchParams.set('bedrooms', String(minBedrooms));
+  url.searchParams.set('limit', '200');
 
   const response = await fetch(url, { headers: { 'X-Api-Key': RENTCAST_API_KEY } });
   if (!response.ok) throw new Error(`RentCast responded ${response.status}`);
-
   const listings = await response.json();
-  return maxRent ? listings.filter((l) => (l.price ?? 0) <= Number(maxRent)) : listings;
+
+  // RentCast documents range/multi-value support for these filters but not the
+  // literal syntax, so the results are re-filtered here. A syntax mismatch can
+  // then never surface a 2-bed or an over-budget listing.
+  return (Array.isArray(listings) ? listings : []).filter(
+    (l) => (l.bedrooms ?? 0) >= minBedrooms && (l.price ?? Infinity) <= maxRent
+  );
 }
 
 exports.handler = async (event) => {
   const { householdId } = getHouseholdContext(event);
   const query = event.queryStringParameters || {};
-  const key = new URLSearchParams(query).toString() || 'default';
+  const minBedrooms = Number(query.bedrooms) || MIN_BEDROOMS;
+  const maxRent = Number(query.maxRent) || MAX_RENT;
 
+  const key = `${minBedrooms}bd-${maxRent}`;
   const cached = await get(RENTALS_CACHE_TABLE, { PK: householdId, SK: key });
   if (cached && Date.now() - new Date(cached.cachedAt).getTime() < CACHE_TTL_MS) {
-    return ok({ listings: cached.listings, cachedAt: cached.cachedAt, fromCache: true });
+    return ok({
+      listings: cached.listings,
+      cachedAt: cached.cachedAt,
+      fromCache: true,
+      criteria: { minBedrooms, maxRent, radiusMiles: SEARCH_RADIUS_MILES },
+    });
   }
 
-  const results = await Promise.all(
-    ZIP_CODES.map((zip) => fetchListings(zip, query).catch(() => []))
-  );
-  const listings = results.flat();
+  const listings = await fetchListings({ minBedrooms, maxRent });
   const cachedAt = new Date().toISOString();
 
   await put(RENTALS_CACHE_TABLE, {
@@ -47,5 +64,10 @@ exports.handler = async (event) => {
     expiresAt: Math.floor((Date.now() + CACHE_TTL_MS) / 1000),
   });
 
-  return ok({ listings, cachedAt, fromCache: false });
+  return ok({
+    listings,
+    cachedAt,
+    fromCache: false,
+    criteria: { minBedrooms, maxRent, radiusMiles: SEARCH_RADIUS_MILES },
+  });
 };

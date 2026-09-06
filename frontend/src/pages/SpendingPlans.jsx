@@ -1,184 +1,309 @@
 import { useEffect, useState } from 'react';
 import BlueprintCard from '../components/BlueprintCard.jsx';
 import PageHeader from '../components/PageHeader.jsx';
-import { useSpendingPlans, useSpendingPlan, useSaveSpendingPlan, useRecurringBills } from '../api/hooks.js';
+import {
+  useSpendingPlans,
+  useSaveSpendingPlan,
+  useDeleteSpendingPlan,
+  useCommitSpendingPlan,
+  useRecurringBills,
+  useAccounts,
+} from '../api/hooks.js';
 import { CATEGORIES } from '../constants/categories.js';
-import { money, percent } from '../utils/format.js';
-import { suggestAllocationsFromBills } from '../utils/billPeriod.js';
+import { money, percent, shortDate } from '../utils/format.js';
+import { currentPeriod, suggestAllocationsFromBills, suggestIncomeFromBills } from '../utils/billPeriod.js';
 
-function useMounted() {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    const t = setTimeout(() => setMounted(true), 50);
-    return () => clearTimeout(t);
-  }, []);
-  return mounted;
+const EMPTY_DRAFT = { label: '', income: '', allocations: {}, g1Extra: '', g2Allocation: '' };
+
+// Debts are what a commit pays down; deposit accounts aren't listed.
+const isDebtAccount = (a) => ['credit', 'loan', 'bnpl'].includes(a.type);
+
+function ScoreCard({ plan }) {
+  const b = plan.scoreBreakdown ?? {};
+  return (
+    <BlueprintCard
+      elevated={false}
+      style={{ background: 'color-mix(in srgb, var(--color-accent) 14%, transparent)', gap: 'var(--space-2)' }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <div className="card-kicker">Plan Score</div>
+          <div className="text-muted" style={{ fontSize: 11 }}>
+            {percent(b.debtContributionPct, 1)} debt + {percent(b.savingsContributionPct, 1)} savings ={' '}
+            {percent(b.combinedPct, 1)}
+          </div>
+        </div>
+        <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 40, color: 'var(--color-accent)' }}>
+          {plan.score}
+        </div>
+      </div>
+      {b.nextGrade && (
+        <div className="text-muted" style={{ fontSize: 12 }}>
+          {money(b.amountToNextGrade)} more toward debt or savings would earn a {b.nextGrade}.
+        </div>
+      )}
+    </BlueprintCard>
+  );
 }
 
 export default function SpendingPlans() {
-  const mounted = useMounted();
-  const { data: plansData } = useSpendingPlans();
-  const [selectedPayDate, setSelectedPayDate] = useState('');
-  const savePlan = useSaveSpendingPlan();
-
-  const plans = plansData?.plans ?? [];
-  const activePayDate = selectedPayDate || plans[0]?.payDate || '';
-  const { data: planData } = useSpendingPlan(activePayDate);
-
-  const plan = planData?.plan;
-  const actuals = planData?.actuals ?? {};
-
-  const categories = Object.entries(plan?.allocations ?? {}).map(([name, planned]) => ({
-    name,
-    planned,
-    actual: actuals[name] ?? 0,
-  }));
-
-  const [draft, setDraft] = useState({ payDate: '', income: '', allocations: {} });
+  const { data, isLoading } = useSpendingPlans();
   const { data: billsData } = useRecurringBills();
-  const [autoFilledCategories, setAutoFilledCategories] = useState([]);
+  const { data: accountsData } = useAccounts();
+  const savePlan = useSaveSpendingPlan();
+  const deletePlan = useDeleteSpendingPlan();
+  const commitPlan = useCommitSpendingPlan();
 
-  // Pre-fill fixed-cost categories (Housing, Debt_Payment, Childcare, etc.)
-  // from whichever Recurring Bills land in this pay period. Only runs when
-  // the pay date itself changes, so it never clobbers a manual edit made
-  // afterward to some other field.
+  const [draft, setDraft] = useState(EMPTY_DRAFT);
+  const [editingId, setEditingId] = useState(null);
+  const [autoFilled, setAutoFilled] = useState([]);
+  const [committing, setCommitting] = useState(null);
+  const [payments, setPayments] = useState({});
+  const [savingsAmount, setSavingsAmount] = useState('');
+  const [commitResult, setCommitResult] = useState(null);
+
+  const period = data?.currentPeriod ?? currentPeriod();
+  const drafts = data?.drafts ?? [];
+  const committed = data?.committed ?? [];
+  const committedThisPeriod = committed.find((p) => p.periodKey === period.periodKey);
+  const debts = (accountsData?.accounts ?? []).filter(isDebtAccount);
+
+  // Seed a new draft from the recurring bills that land in this pay period.
   useEffect(() => {
-    if (!draft.payDate || !billsData?.bills) return;
-    const suggested = suggestAllocationsFromBills(billsData.bills, draft.payDate);
+    if (editingId || !billsData?.bills) return;
+    const suggested = suggestAllocationsFromBills(billsData.bills, period);
     if (!Object.keys(suggested).length) return;
     setDraft((d) => ({
       ...d,
-      allocations: {
-        ...d.allocations,
-        ...Object.fromEntries(Object.entries(suggested).map(([k, v]) => [k, String(v)])),
-      },
+      income: d.income || String(suggestIncomeFromBills(billsData.bills, period)),
+      allocations: { ...Object.fromEntries(Object.entries(suggested).map(([k, v]) => [k, String(v)])), ...d.allocations },
     }));
-    setAutoFilledCategories(Object.keys(suggested));
+    setAutoFilled(Object.keys(suggested));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft.payDate, billsData]);
+  }, [billsData, period.periodKey, editingId]);
 
-  const submit = (e) => {
+  const submitDraft = (e) => {
     e.preventDefault();
     savePlan.mutate(
       {
-        payDate: draft.payDate,
+        planId: editingId ?? undefined,
+        label: draft.label || undefined,
+        periodStart: period.periodStart,
         income: Number(draft.income) || 0,
+        g1Extra: Number(draft.g1Extra) || 0,
+        g2Allocation: Number(draft.g2Allocation) || 0,
         allocations: Object.fromEntries(
           Object.entries(draft.allocations)
             .filter(([, v]) => v !== '' && v != null)
             .map(([k, v]) => [k, Number(v)])
         ),
       },
-      { onSuccess: (res) => setSelectedPayDate(res.plan.payDate) }
+      {
+        onSuccess: () => {
+          setDraft(EMPTY_DRAFT);
+          setEditingId(null);
+          setAutoFilled([]);
+        },
+      }
+    );
+  };
+
+  const startEditing = (plan) => {
+    setEditingId(plan.planId);
+    setAutoFilled([]);
+    setDraft({
+      label: plan.label ?? '',
+      income: String(plan.income ?? ''),
+      g1Extra: String(plan.g1Extra ?? ''),
+      g2Allocation: String(plan.g2Allocation ?? ''),
+      allocations: Object.fromEntries(Object.entries(plan.allocations ?? {}).map(([k, v]) => [k, String(v)])),
+    });
+  };
+
+  const startCommitting = (plan) => {
+    setCommitResult(null);
+    setCommitting(plan);
+    setPayments(
+      Object.fromEntries(debts.map((a) => [a.accountId, a.minimumPayment != null ? String(a.minimumPayment) : '']))
+    );
+    setSavingsAmount(String(plan.g2Allocation ?? ''));
+  };
+
+  const paymentsTotal = Object.values(payments).reduce((sum, v) => sum + (Number(v) || 0), 0);
+  const plannedDebt = Number(committing?.allocations?.Debt_Payment ?? 0);
+
+  const submitCommit = () => {
+    commitPlan.mutate(
+      {
+        planId: committing.planId,
+        accountPayments: Object.fromEntries(
+          Object.entries(payments).filter(([, v]) => Number(v) > 0).map(([k, v]) => [k, Number(v)])
+        ),
+        savingsAmount: Number(savingsAmount) || 0,
+      },
+      {
+        onSuccess: (res) => {
+          setCommitResult(res.changes ?? []);
+          setCommitting(null);
+        },
+      }
     );
   };
 
   return (
     <>
-      <PageHeader
-        title="Spending Plans"
-        actions={
-          plans.length > 0 && (
-            <select className="input" value={activePayDate} onChange={(e) => setSelectedPayDate(e.target.value)}>
-              {plans.map((p) => (
-                <option key={p.payDate} value={p.payDate}>{p.label}</option>
-              ))}
-            </select>
-          )
-        }
-      />
+      <PageHeader title="Spending Plans" />
 
-      {plan && (
-        <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--space-4)' }}>
-            <BlueprintCard style={{ gap: 'var(--space-2)' }}>
-              <div className="card-kicker">{plan.label} · Income</div>
-              <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 28 }}>{money(plan.income)}</div>
-            </BlueprintCard>
+      <BlueprintCard style={{ gap: 'var(--space-2)' }}>
+        <div className="card-kicker">Current pay period</div>
+        <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 22 }}>
+          {shortDate(period.periodStart)} – {shortDate(period.periodEnd)}
+        </div>
+        <div className="text-muted" style={{ fontSize: 12 }}>
+          {committedThisPeriod
+            ? `Committed: ${committedThisPeriod.label} (${committedThisPeriod.score})`
+            : `${drafts.length} draft${drafts.length === 1 ? '' : 's'} — none committed yet. Drafts clear when the period rolls over.`}
+        </div>
+      </BlueprintCard>
 
-            <BlueprintCard style={{ gap: 'var(--space-2)' }}>
-              <div className="card-kicker">Debt + Savings Rate</div>
-              <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 28 }}>
-                {percent(plan.scoreBreakdown?.combinedPct, 1)}
-              </div>
-            </BlueprintCard>
-
-            <BlueprintCard
-              elevated={false}
-              style={{
-                background: 'color-mix(in srgb, var(--color-accent) 14%, transparent)',
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-              }}
-            >
-              <div>
-                <div className="card-kicker">Plan Score</div>
-                <div className="text-muted" style={{ fontSize: 11 }}>
-                  Combined {percent(plan.scoreBreakdown?.combinedPct, 1)}
-                </div>
-              </div>
-              <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 34, color: 'var(--color-accent)' }}>
-                {plan.score}
-              </div>
-            </BlueprintCard>
+      {commitResult && (
+        <BlueprintCard>
+          <div className="card-title">Balances updated</div>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table">
+              <thead>
+                <tr><th>Account</th><th>Applied</th><th>Before</th><th>After</th></tr>
+              </thead>
+              <tbody>
+                {commitResult.map((c) => (
+                  <tr key={c.accountId}>
+                    <td>{c.name}</td>
+                    <td style={{ color: c.payment < 0 ? 'var(--color-accent)' : 'inherit' }}>
+                      {c.payment < 0 ? `+${money(-c.payment)} saved` : money(c.payment)}
+                    </td>
+                    <td className="text-muted">{money(c.before, { maximumFractionDigits: 2 })}</td>
+                    <td>{money(c.after, { maximumFractionDigits: 2 })}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
+        </BlueprintCard>
+      )}
 
-          <BlueprintCard>
-            <div className="card-title">Allocations vs Actuals</div>
-            {categories.map((cat, i) => {
-              const actualPct = cat.planned ? (cat.actual / cat.planned) * 100 : 0;
-              const isOver = cat.actual > cat.planned;
-              return (
-                <div key={cat.name} style={{ display: 'grid', gridTemplateColumns: 'minmax(90px, 120px) 1fr 90px', gap: 'var(--space-3)', alignItems: 'center' }}>
-                  <div style={{ fontSize: 13 }}>{cat.name}</div>
-                  <div style={{ position: 'relative', height: 14, background: 'var(--color-surface-2)' }}>
-                    <div
-                      style={{
-                        position: 'absolute',
-                        inset: 0,
-                        width: mounted ? `${Math.min(actualPct, 100)}%` : '0%',
-                        background: isOver ? 'var(--color-overspend)' : 'color-mix(in srgb, var(--color-accent) 55%, transparent)',
-                        transition: 'width 1s cubic-bezier(.2,.8,.2,1), background 300ms',
-                        transitionDelay: `${i * 90}ms`,
-                        border: '1px solid var(--color-bg)',
-                      }}
-                    />
-                    <div style={{ position: 'absolute', top: 0, bottom: 0, width: 2, background: 'var(--color-text)', left: '100%' }} />
-                  </div>
-                  <div
-                    className="text-muted"
-                    style={{ fontSize: 12, fontWeight: 600, textAlign: 'right', color: isOver ? 'var(--color-overspend)' : 'inherit' }}
-                  >
-                    {isOver ? `+${money(cat.actual - cat.planned)} over` : `${money(cat.actual)} / ${money(cat.planned)}`}
-                  </div>
-                </div>
-              );
-            })}
-            {!categories.length && <p className="card-body">This plan has no allocations yet.</p>}
-          </BlueprintCard>
-        </>
+      {committing && (
+        <BlueprintCard>
+          <div className="card-title">Commit “{committing.label}”</div>
+          <p className="card-body">
+            Enter what you're actually paying each account this period. Committing subtracts these from your balances,
+            which is what updates G1, G3 and the dashboard.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-3)' }}>
+            {debts.map((account) => (
+              <div className="field" key={account.accountId}>
+                <label htmlFor={`pay-${account.accountId}`}>
+                  {account.name}
+                  <span className="text-muted" style={{ fontSize: 10 }}> · {money(account.currentBalance, { maximumFractionDigits: 2 })}</span>
+                </label>
+                <input
+                  id={`pay-${account.accountId}`}
+                  className="input"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={payments[account.accountId] ?? ''}
+                  onChange={(e) => setPayments({ ...payments, [account.accountId]: e.target.value })}
+                />
+              </div>
+            ))}
+            <div className="field">
+              <label htmlFor="savingsAmount">To savings (G2)</label>
+              <input
+                id="savingsAmount"
+                className="input"
+                type="number"
+                step="0.01"
+                min="0"
+                value={savingsAmount}
+                onChange={(e) => setSavingsAmount(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="text-muted" style={{ fontSize: 12 }}>
+            Payments total {money(paymentsTotal)} against a planned Debt_Payment allocation of {money(plannedDebt)}
+            {Math.abs(paymentsTotal - plannedDebt) > 0.5 && ' — these differ, which is fine if intentional.'}
+          </div>
+          <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+            <button type="button" className="btn btn-primary" onClick={submitCommit} disabled={commitPlan.isPending}>
+              {commitPlan.isPending ? 'Committing…' : 'Commit and apply balances'}
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={() => setCommitting(null)}>Cancel</button>
+          </div>
+          {commitPlan.isError && (
+            <p style={{ fontSize: 12, color: 'var(--color-overspend)' }}>{commitPlan.error?.message}</p>
+          )}
+        </BlueprintCard>
       )}
 
       <BlueprintCard>
-        <div className="card-title">New Plan</div>
-        <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+        <div className="card-title">Drafts for this period</div>
+        {isLoading && <p className="card-body">Loading…</p>}
+        {!isLoading && !drafts.length && (
+          <p className="card-body">No drafts yet — build one below to see it scored before you commit.</p>
+        )}
+        {drafts.map((plan) => (
+          <div
+            key={plan.planId}
+            style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 'var(--space-3)', alignItems: 'center', borderTop: '1px solid var(--color-divider)', paddingTop: 'var(--space-3)' }}
+          >
+            <div>
+              <div style={{ fontSize: 14 }}>
+                {plan.label} <span className="tag tag-outline" style={{ marginLeft: 6 }}>{plan.score}</span>
+              </div>
+              <div className="text-muted" style={{ fontSize: 11 }}>
+                {money(plan.income)} income · {percent(plan.scoreBreakdown?.combinedPct, 1)} to debt + savings
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+              <button type="button" className="btn btn-ghost" onClick={() => startEditing(plan)}>Edit</button>
+              <button type="button" className="btn btn-ghost" onClick={() => deletePlan.mutate(plan.planId)}>Delete</button>
+              {!committedThisPeriod && (
+                <button type="button" className="btn btn-secondary" onClick={() => startCommitting(plan)}>Commit</button>
+              )}
+            </div>
+          </div>
+        ))}
+      </BlueprintCard>
+
+      {drafts.length > 0 && <ScoreCard plan={drafts[0]} />}
+
+      <BlueprintCard>
+        <div className="card-title">{editingId ? 'Edit draft' : 'New draft'}</div>
+        <form onSubmit={submitDraft} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 'var(--space-3)' }}>
             <div className="field">
-              <label htmlFor="payDate">Pay date</label>
-              <input id="payDate" className="input" type="date" required value={draft.payDate} onChange={(e) => setDraft({ ...draft, payDate: e.target.value })} />
+              <label htmlFor="label">Name</label>
+              <input id="label" className="input" value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} placeholder="e.g. Aggressive payoff" />
             </div>
             <div className="field">
               <label htmlFor="income">Expected net income</label>
               <input id="income" className="input" type="number" required value={draft.income} onChange={(e) => setDraft({ ...draft, income: e.target.value })} />
             </div>
+            <div className="field">
+              <label htmlFor="g1Extra">Extra toward debt (G1)</label>
+              <input id="g1Extra" className="input" type="number" value={draft.g1Extra} onChange={(e) => setDraft({ ...draft, g1Extra: e.target.value })} />
+            </div>
+            <div className="field">
+              <label htmlFor="g2Allocation">To savings (G2)</label>
+              <input id="g2Allocation" className="input" type="number" value={draft.g2Allocation} onChange={(e) => setDraft({ ...draft, g2Allocation: e.target.value })} />
+            </div>
           </div>
 
           <div>
             <div className="card-kicker">Allocations</div>
-            {autoFilledCategories.length > 0 && (
+            {autoFilled.length > 0 && (
               <div className="text-muted" style={{ fontSize: 11 }}>
-                {autoFilledCategories.join(', ')} pre-filled from Recurring Bills for this pay period — override any of them below.
+                {autoFilled.join(', ')} pre-filled from Recurring Bills for this period — override any of them below.
               </div>
             )}
           </div>
@@ -187,7 +312,7 @@ export default function SpendingPlans() {
               <div className="field" key={category}>
                 <label htmlFor={`alloc-${category}`}>
                   {category}
-                  {autoFilledCategories.includes(category) && (
+                  {autoFilled.includes(category) && (
                     <span className="tag tag-outline" style={{ marginLeft: 6, fontSize: 9 }}>bills</span>
                   )}
                 </label>
@@ -202,11 +327,42 @@ export default function SpendingPlans() {
             ))}
           </div>
 
-          <button type="submit" className="btn btn-primary" style={{ alignSelf: 'flex-start' }} disabled={savePlan.isPending}>
-            {savePlan.isPending ? 'Saving…' : 'Save Plan'}
-          </button>
+          <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+            <button type="submit" className="btn btn-primary" disabled={savePlan.isPending}>
+              {savePlan.isPending ? 'Saving…' : editingId ? 'Save draft' : 'Score this draft'}
+            </button>
+            {editingId && (
+              <button type="button" className="btn btn-secondary" onClick={() => { setEditingId(null); setDraft(EMPTY_DRAFT); }}>
+                Cancel
+              </button>
+            )}
+          </div>
         </form>
       </BlueprintCard>
+
+      {committed.length > 0 && (
+        <BlueprintCard>
+          <div className="card-title">Committed history</div>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table">
+              <thead>
+                <tr><th>Period</th><th>Plan</th><th>Income</th><th>Score</th><th>Committed</th></tr>
+              </thead>
+              <tbody>
+                {committed.map((plan) => (
+                  <tr key={plan.planId}>
+                    <td>{shortDate(plan.periodStart)}</td>
+                    <td>{plan.label}</td>
+                    <td>{money(plan.income)}</td>
+                    <td><span className="tag tag-outline">{plan.score}</span></td>
+                    <td className="text-muted">{plan.committedAt ? new Date(plan.committedAt).toLocaleDateString() : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </BlueprintCard>
+      )}
     </>
   );
 }

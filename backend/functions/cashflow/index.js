@@ -4,23 +4,15 @@ const { getHouseholdContext } = require('../../shared/auth');
 const { ok, badRequest, noContent, parseBody } = require('../../shared/http');
 
 const CASHFLOW_EVENTS_TABLE = process.env.CASHFLOW_EVENTS_TABLE;
-const ACCOUNTS_TABLE = process.env.ACCOUNTS_TABLE;
 const RECURRING_BILLS_TABLE = process.env.RECURRING_BILLS_TABLE;
-
-// The running balance starts from the live Plaid balance of the household's
-// checking account rather than a manually entered figure.
-async function getStartingBalance(householdId) {
-  const accounts = await queryByPK(ACCOUNTS_TABLE, householdId);
-  const checking = accounts.find(
-    (a) => a.subtype === 'checking' || a.type === 'checking'
-  );
-  return checking?.currentBalance ?? 0;
-}
 
 function daysInMonth(year, month) {
   return new Date(year, month, 0).getDate();
 }
 
+// This is a net-flow analyzer, not a bank balance: the cumulative line starts
+// at zero and answers "does this month's income cover this month's bills, and
+// where is it tightest?" — deliberately independent of any account balance.
 async function getMonth(householdId, year, month) {
   const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
   const daysThisMonth = daysInMonth(year, month);
@@ -30,8 +22,6 @@ async function getMonth(householdId, year, month) {
     queryByPK(RECURRING_BILLS_TABLE, householdId),
   ]);
 
-  // Recurring bills are a template (description/amount/dayOfMonth), not a
-  // dated event — project each active one onto this month's calendar.
   const projectedBills = bills
     .filter((b) => b.isActive !== false)
     .map((b) => {
@@ -53,29 +43,34 @@ async function getMonth(householdId, year, month) {
     (a, b) => a.eventDate.localeCompare(b.eventDate)
   );
 
-  const startingBalance = await getStartingBalance(householdId);
-  const dailyRunningBalance = {};
+  const dailyNetPosition = {};
   const negativeDays = [];
-  let running = startingBalance;
+  let running = 0;
+  let totalIncome = 0;
+  let totalBills = 0;
 
-  for (let day = 1; day <= daysInMonth(year, month); day++) {
+  for (let day = 1; day <= daysThisMonth; day++) {
     const date = `${monthPrefix}-${String(day).padStart(2, '0')}`;
     for (const event of events.filter((e) => e.eventDate === date)) {
       running += event.amount;
+      if (event.amount >= 0) totalIncome += event.amount;
+      else totalBills += event.amount;
     }
-    dailyRunningBalance[date] = Math.round(running * 100) / 100;
+    dailyNetPosition[date] = Math.round(running * 100) / 100;
     if (running < 0) negativeDays.push(date);
   }
 
-  const entries = Object.entries(dailyRunningBalance);
+  const entries = Object.entries(dailyNetPosition);
   const lowest = entries.reduce((min, cur) => (cur[1] < min[1] ? cur : min), entries[0]);
 
   return ok({
-    startingBalance,
     events: events.map(({ PK, SK, ...rest }) => rest),
-    dailyRunningBalance,
+    dailyNetPosition,
+    totalIncome: Math.round(totalIncome * 100) / 100,
+    totalBills: Math.round(totalBills * 100) / 100,
+    netFlow: Math.round(running * 100) / 100,
     lowestPointDate: lowest?.[0] ?? null,
-    lowestPointBalance: lowest?.[1] ?? null,
+    lowestNetPosition: lowest?.[1] ?? null,
     negativeDays,
   });
 }
@@ -109,9 +104,7 @@ async function createEvent(householdId, body) {
 async function deleteEvent(householdId, eventId) {
   const events = await queryByPK(CASHFLOW_EVENTS_TABLE, householdId);
   const target = events.find((e) => e.eventId === eventId);
-
   if (!target) return badRequest('Event not found');
-  if (target.source !== 'manual') return badRequest('Only manually added events can be deleted');
 
   await del(CASHFLOW_EVENTS_TABLE, { PK: householdId, SK: target.SK });
   return noContent();

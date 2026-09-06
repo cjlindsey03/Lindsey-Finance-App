@@ -3,8 +3,6 @@ import { useAuth } from './context/AuthContext.jsx';
 import AppShell from './components/AppShell.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Cashflow from './pages/Cashflow.jsx';
-import Transactions from './pages/Transactions.jsx';
-import CategoryRules from './pages/CategoryRules.jsx';
 import RecurringBills from './pages/RecurringBills.jsx';
 import G1Tracker from './pages/G1Tracker.jsx';
 import G2Tracker from './pages/G2Tracker.jsx';
@@ -27,8 +25,6 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/cashflow" element={<Cashflow />} />
-        <Route path="/transactions" element={<Transactions />} />
-        <Route path="/transactions/rules" element={<CategoryRules />} />
         <Route path="/recurring-bills" element={<RecurringBills />} />
         <Route path="/g1" element={<G1Tracker />} />
         <Route path="/g2" element={<G2Tracker />} />

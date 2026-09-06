@@ -34,63 +34,6 @@ export function useUpdateAccount() {
   });
 }
 
-export function useTransactions(filters = {}) {
-  const api = useApi();
-  const params = new URLSearchParams(
-    Object.entries(filters).filter(([, v]) => v !== '' && v != null)
-  ).toString();
-  return useQuery({
-    queryKey: ['transactions', filters],
-    queryFn: () => api(`/transactions${params ? `?${params}` : ''}`),
-  });
-}
-
-export function useCategorizeTransaction() {
-  const api = useApi();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ transactionId, category, subcategory }) =>
-      api(`/transactions/${transactionId}/categorize`, {
-        method: 'POST',
-        body: { category, subcategory },
-      }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['transactions'] }),
-  });
-}
-
-export function useCategoryRules() {
-  const api = useApi();
-  return useQuery({ queryKey: ['category-rules'], queryFn: () => api('/category-rules') });
-}
-
-export function useSaveCategoryRule() {
-  const api = useApi();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ ruleId, ...rule }) =>
-      ruleId
-        ? api(`/category-rules/${ruleId}`, { method: 'PUT', body: rule })
-        : api('/category-rules', { method: 'POST', body: rule }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['category-rules'] }),
-  });
-}
-
-export function useDeleteCategoryRule() {
-  const api = useApi();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (ruleId) => api(`/category-rules/${ruleId}`, { method: 'DELETE' }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['category-rules'] }),
-  });
-}
-
-export function useTestCategoryRule() {
-  const api = useApi();
-  return useMutation({
-    mutationFn: (rule) => api('/category-rules/test', { method: 'POST', body: rule }),
-  });
-}
-
 export function useCashflow(year, month) {
   const api = useApi();
   return useQuery({
@@ -171,21 +114,57 @@ export function useSpendingPlans() {
   return useQuery({ queryKey: ['spending-plans'], queryFn: () => api('/spending-plans') });
 }
 
-export function useSpendingPlan(payDate) {
-  const api = useApi();
-  return useQuery({
-    queryKey: ['spending-plans', payDate],
-    queryFn: () => api(`/spending-plans/${payDate}`),
-    enabled: Boolean(payDate),
-  });
-}
-
 export function useSaveSpendingPlan() {
   const api = useApi();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (plan) => api('/spending-plans', { method: 'POST', body: plan }),
+    mutationFn: ({ planId, ...plan }) =>
+      planId
+        ? api(`/spending-plans/${planId}`, { method: 'PUT', body: plan })
+        : api('/spending-plans', { method: 'POST', body: plan }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['spending-plans'] }),
+  });
+}
+
+export function useDeleteSpendingPlan() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (planId) => api(`/spending-plans/${planId}`, { method: 'DELETE' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['spending-plans'] }),
+  });
+}
+
+// Committing applies the plan's payments to real account balances, so every
+// balance-derived view (accounts, G1, G2, G3) has to be refetched after.
+export function useCommitSpendingPlan() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ planId, accountPayments, savingsAmount }) =>
+      api(`/spending-plans/${planId}/commit`, { method: 'POST', body: { accountPayments, savingsAmount } }),
+    onSuccess: () => queryClient.invalidateQueries(),
+  });
+}
+
+export function useCreateAccount() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (account) => api('/accounts', { method: 'POST', body: account }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['accounts'] }),
+  });
+}
+
+export function useDeleteAccount() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (accountId) => api(`/accounts/${accountId}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['accounts'] });
+      queryClient.invalidateQueries({ queryKey: ['g1'] });
+    },
   });
 }
 
@@ -262,29 +241,3 @@ export function useDeleteRecurringBill() {
   });
 }
 
-export function usePlaidLinkToken() {
-  const api = useApi();
-  return useMutation({ mutationFn: () => api('/plaid/link-token', { method: 'POST' }) });
-}
-
-export function useSyncPlaid() {
-  const api = useApi();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: () => api('/plaid/sync', { method: 'POST' }),
-    onSuccess: () => queryClient.invalidateQueries(),
-  });
-}
-
-export function useExchangePlaidToken() {
-  const api = useApi();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ publicToken, institutionId, institutionName }) =>
-      api('/plaid/exchange-token', {
-        method: 'POST',
-        body: { publicToken, institutionId, institutionName },
-      }),
-    onSuccess: () => queryClient.invalidateQueries(),
-  });
-}

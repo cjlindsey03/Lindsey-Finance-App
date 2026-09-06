@@ -1,3 +1,9 @@
+> **Superseded in places (Sep 2026).** Plaid was removed from the app entirely — it could
+> only ever reach sandbox test institutions on the free tier. Transactions and Categorization
+> Rules went with it, the cashflow view no longer uses a checking balance, and the Spending
+> Plan became the engine that updates account balances. See README.md for the current
+> architecture; the Plaid sections below are kept only as a record of the original design.
+
 This is a draft and not an absolute fixed document, this document can be updated by Claude Code whenever I make decisions to go in another direction while creating this app.
 
 # Household Financial Dashboard — Claude Code Build Spec

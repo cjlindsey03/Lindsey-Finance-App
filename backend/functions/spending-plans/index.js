@@ -1,21 +1,36 @@
-const { queryByPK, get, put } = require('../../shared/db');
+const { randomUUID } = require('crypto');
+const { queryByPK, get, put, del } = require('../../shared/db');
 const { getHouseholdContext } = require('../../shared/auth');
-const { ok, badRequest, notFound, parseBody } = require('../../shared/http');
+const { ok, badRequest, notFound, noContent, parseBody } = require('../../shared/http');
+const { getPeriod, currentPeriod } = require('../../shared/payPeriod');
+const { writeBalanceSnapshot } = require('../../shared/snapshots');
 
 const SPENDING_PLANS_TABLE = process.env.SPENDING_PLANS_TABLE;
-const TRANSACTIONS_TABLE = process.env.TRANSACTIONS_TABLE;
+const ACCOUNTS_TABLE = process.env.ACCOUNTS_TABLE;
+const G2_TABLE = process.env.G2_TABLE;
 
-const PAY_PERIOD_DAYS = 14;
+const GRADE_THRESHOLDS = [
+  { grade: 'A', min: 25 },
+  { grade: 'B', min: 20 },
+  { grade: 'C', min: 15 },
+  { grade: 'D', min: 10 },
+];
+
+const toPublicPlan = ({ PK, SK, ...rest }) => ({ planId: SK, ...rest });
 
 function scorePlan({ income, allocations = {}, g1Extra = 0, g2Allocation = 0 }) {
-  if (!income) return { score: 'F', scoreBreakdown: { combinedPct: 0 } };
+  if (!income) {
+    return { score: 'F', scoreBreakdown: { debtContributionPct: 0, savingsContributionPct: 0, combinedPct: 0 } };
+  }
 
   const debtContributionPct = (((allocations.Debt_Payment ?? 0) + g1Extra) / income) * 100;
   const savingsContributionPct = (g2Allocation / income) * 100;
   const combinedPct = debtContributionPct + savingsContributionPct;
+  const score = GRADE_THRESHOLDS.find((t) => combinedPct >= t.min)?.grade ?? 'F';
 
-  const score =
-    combinedPct >= 25 ? 'A' : combinedPct >= 20 ? 'B' : combinedPct >= 15 ? 'C' : combinedPct >= 10 ? 'D' : 'F';
+  // How much more toward debt or savings would earn the next grade up —
+  // the actionable half of the score.
+  const nextGrade = [...GRADE_THRESHOLDS].reverse().find((t) => t.min > combinedPct);
 
   return {
     score,
@@ -23,78 +38,165 @@ function scorePlan({ income, allocations = {}, g1Extra = 0, g2Allocation = 0 }) 
       debtContributionPct: Math.round(debtContributionPct * 10) / 10,
       savingsContributionPct: Math.round(savingsContributionPct * 10) / 10,
       combinedPct: Math.round(combinedPct * 10) / 10,
+      nextGrade: nextGrade?.grade ?? null,
+      amountToNextGrade: nextGrade
+        ? Math.round(((nextGrade.min - combinedPct) / 100) * income * 100) / 100
+        : null,
     },
   };
 }
 
-function addDays(dateStr, days) {
-  const d = new Date(dateStr);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-async function getPlanWithActuals(householdId, payDate) {
-  const plan = await get(SPENDING_PLANS_TABLE, { PK: householdId, SK: payDate });
-  if (!plan) return notFound('Plan not found');
-
-  const periodEnd = addDays(payDate, PAY_PERIOD_DAYS);
-  const transactions = await queryByPK(TRANSACTIONS_TABLE, householdId);
-
-  const actuals = {};
-  for (const tx of transactions) {
-    if (tx.date < payDate || tx.date > periodEnd || tx.isTransfer) continue;
-    const category = tx.resolvedCategory ?? 'Other';
-    actuals[category] = (actuals[category] ?? 0) + tx.amount;
-  }
-
-  const { PK, SK, ...rest } = plan;
-  return ok({ plan: { payDate: SK, ...rest }, actuals, periodEnd });
-}
-
 async function listPlans(householdId) {
   const plans = await queryByPK(SPENDING_PLANS_TABLE, householdId);
-  plans.sort((a, b) => b.SK.localeCompare(a.SK));
-  return ok({ plans: plans.map(({ PK, SK, ...rest }) => ({ payDate: SK, ...rest })) });
+  const { periodKey } = currentPeriod();
+
+  const drafts = plans
+    .filter((p) => p.status === 'draft' && p.periodKey === periodKey)
+    .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+  const committed = plans
+    .filter((p) => p.status === 'committed')
+    .sort((a, b) => (b.periodKey ?? '').localeCompare(a.periodKey ?? ''));
+
+  return ok({
+    currentPeriod: currentPeriod(),
+    drafts: drafts.map(toPublicPlan),
+    committed: committed.map(toPublicPlan),
+  });
 }
 
-async function savePlan(householdId, payDate, body) {
-  const targetDate = payDate ?? body.payDate;
-  if (!targetDate) return badRequest('payDate is required');
+async function savePlan(householdId, planId, body) {
+  const existing = planId ? await get(SPENDING_PLANS_TABLE, { PK: householdId, SK: planId }) : null;
+  if (planId && !existing) return notFound('Plan not found');
+  if (existing?.status === 'committed') return badRequest('A committed plan cannot be edited');
 
-  const existing = await get(SPENDING_PLANS_TABLE, { PK: householdId, SK: targetDate });
+  const period = body.periodStart ? getPeriod(body.periodStart) : existing ? getPeriod(existing.periodStart) : currentPeriod();
   const { score, scoreBreakdown } = scorePlan(body);
   const now = new Date().toISOString();
 
   const plan = {
     PK: householdId,
-    SK: targetDate,
-    label: body.label ?? existing?.label ?? `${targetDate} Plan`,
-    income: body.income ?? 0,
+    SK: planId ?? randomUUID(),
+    status: 'draft',
+    periodKey: period.periodKey,
+    periodStart: period.periodStart,
+    periodEnd: period.periodEnd,
+    label: body.label ?? existing?.label ?? `${period.periodStart} draft`,
+    income: Number(body.income) || 0,
     allocations: body.allocations ?? {},
+    g1Extra: Number(body.g1Extra) || 0,
+    g2Allocation: Number(body.g2Allocation) || 0,
     notes: body.notes ?? '',
-    g1Extra: body.g1Extra ?? 0,
-    g2Allocation: body.g2Allocation ?? 0,
     score,
     scoreBreakdown,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
-  await put(SPENDING_PLANS_TABLE, plan);
 
-  const { PK, SK, ...rest } = plan;
-  return ok({ plan: { payDate: SK, ...rest } });
+  await put(SPENDING_PLANS_TABLE, plan);
+  return ok({ plan: toPublicPlan(plan) });
+}
+
+// Committing is what actually moves money in the app: the payments entered on
+// the commit form are applied to real account balances, which is what then
+// updates G1, G3 and the dashboard.
+async function commitPlan(householdId, planId, body) {
+  const plan = await get(SPENDING_PLANS_TABLE, { PK: householdId, SK: planId });
+  if (!plan) return notFound('Plan not found');
+  if (plan.status === 'committed') return badRequest('This plan is already committed');
+
+  const siblings = await queryByPK(SPENDING_PLANS_TABLE, householdId);
+  const alreadyCommitted = siblings.find(
+    (p) => p.status === 'committed' && p.periodKey === plan.periodKey
+  );
+  if (alreadyCommitted) {
+    return badRequest(`A plan is already committed for ${plan.periodKey} — balances would be applied twice`);
+  }
+
+  const accountPayments = body?.accountPayments ?? {};
+  const savingsAmount = Number(body?.savingsAmount) || 0;
+  const changes = [];
+
+  for (const [accountId, rawAmount] of Object.entries(accountPayments)) {
+    const amount = Number(rawAmount) || 0;
+    if (amount <= 0) continue;
+
+    const account = await get(ACCOUNTS_TABLE, { PK: householdId, SK: accountId });
+    if (!account) continue;
+
+    const before = account.currentBalance ?? 0;
+    const updated = { ...account, currentBalance: Math.round((before - amount) * 100) / 100 };
+    await put(ACCOUNTS_TABLE, updated);
+    await writeBalanceSnapshot(householdId, updated, 'plan');
+    changes.push({ accountId, name: account.name, payment: amount, before, after: updated.currentBalance });
+  }
+
+  if (savingsAmount > 0) {
+    const g2 = await get(G2_TABLE, { PK: householdId });
+    const savingsAccountId = g2?.savingsAccountId;
+    const savings = savingsAccountId
+      ? await get(ACCOUNTS_TABLE, { PK: householdId, SK: savingsAccountId })
+      : null;
+
+    if (savings) {
+      const before = savings.currentBalance ?? 0;
+      const updated = { ...savings, currentBalance: Math.round((before + savingsAmount) * 100) / 100 };
+      await put(ACCOUNTS_TABLE, updated);
+      await writeBalanceSnapshot(householdId, updated, 'plan');
+      changes.push({
+        accountId: savingsAccountId,
+        name: savings.name,
+        payment: -savingsAmount,
+        before,
+        after: updated.currentBalance,
+      });
+    }
+  }
+
+  const committed = {
+    ...plan,
+    status: 'committed',
+    accountPayments,
+    savingsAmount,
+    committedAt: new Date().toISOString(),
+  };
+  await put(SPENDING_PLANS_TABLE, committed);
+
+  return ok({ plan: toPublicPlan(committed), changes });
 }
 
 exports.handler = async (event) => {
   const { householdId } = getHouseholdContext(event);
   const method = event.requestContext?.http?.method || 'GET';
-  const payDate = event.pathParameters?.payDate;
+  const planId = event.pathParameters?.planId;
+  const path = event.requestContext?.http?.path || '';
 
   if (method === 'GET') {
-    return payDate ? getPlanWithActuals(householdId, payDate) : listPlans(householdId);
+    if (!planId) return listPlans(householdId);
+    const plan = await get(SPENDING_PLANS_TABLE, { PK: householdId, SK: planId });
+    return plan ? ok({ plan: toPublicPlan(plan) }) : notFound('Plan not found');
+  }
+
+  if (method === 'DELETE') {
+    if (!planId) return badRequest('planId is required');
+    const existing = await get(SPENDING_PLANS_TABLE, { PK: householdId, SK: planId });
+    if (!existing) return notFound('Plan not found');
+    if (existing.status === 'committed') return badRequest('Committed plans are kept as history');
+    await del(SPENDING_PLANS_TABLE, { PK: householdId, SK: planId });
+    return noContent();
   }
 
   const body = parseBody(event);
   if (!body) return badRequest('Invalid JSON body');
-  return savePlan(householdId, payDate, body);
+
+  if (method === 'POST' && path.endsWith('/commit')) {
+    if (!planId) return badRequest('planId is required');
+    return commitPlan(householdId, planId, body);
+  }
+  if (method === 'POST') return savePlan(householdId, null, body);
+  if (method === 'PUT') {
+    if (!planId) return badRequest('planId is required');
+    return savePlan(householdId, planId, body);
+  }
+
+  return badRequest(`Unsupported method ${method}`);
 };

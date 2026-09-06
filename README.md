@@ -1,91 +1,111 @@
 # Lindsey Household Finance App
 
-Two-user household financial dashboard. Full spec: [`Build Instructions.md`](Build%20Instructions.md).
+Two-user household financial dashboard, deployed at `https://d1r46125sashz0.cloudfront.net`.
+
+The original spec is [`Build Instructions.md`](Build%20Instructions.md), but it predates two
+significant changes — Plaid was removed entirely, and the Spending Plan became the app's
+engine. This README describes what the app actually does now.
+
+## How the app works
+
+**There is no bank integration.** Plaid was removed: on the sandbox tier it could only ever
+reach Plaid's fake test institutions, never real Navy Federal or Capital One data, and paid
+Plaid tiers were out of scope. Everything is maintained deliberately instead:
+
+- **Recurring Bills** — every paycheck and regular bill (amount, category, day of month).
+  This is the single source of truth for the cashflow projection and for pre-filling plans.
+- **Spending Plans** — the engine. Draft several plans for a pay period, see each scored
+  A–F on how much of your income goes to debt and savings, then **commit** one. Committing
+  is what moves money: the per-account payments you enter are subtracted from those
+  balances, which is what updates G1, G3, and the dashboard.
+- **Accounts** — hand-maintained in Settings; balances also move on plan commit, and every
+  change writes a balance snapshot so G3 builds a real utilization history.
+- **Cashflow** — a net-flow analyzer, deliberately *not* a bank balance. It starts at $0 and
+  answers "does this month's income cover its bills, and where is it tightest?"
+
+**Pay periods are calendar half-months** (1st–14th, 15th–EOM), matching the 1st/15th
+paydays. Drafts belong to a period; once it rolls over, stale drafts are purged by the daily
+scheduled job and only committed plans are kept as history.
 
 ## Repo layout
 
 ```
-backend/    AWS SAM app — 15 Lambdas, 12 DynamoDB tables, Cognito
+backend/    AWS SAM app — 11 Lambdas, 9 DynamoDB tables, Cognito, S3 + CloudFront
 frontend/   Vite + React SPA (installable PWA)
 ```
 
-> **This repo must live on a local disk.** npm cannot install into Google Drive's
-> virtual filesystem (`G:`) — it fails with `EBADF`. The canonical working copy is
-> `C:\dev\Lindsey-Finance-App`; GitHub is the sync/backup.
+> **This repo must live on a local disk.** npm cannot install into Google Drive's virtual
+> filesystem (`G:`) — it fails with `EBADF`. The working copy is `C:\dev\Lindsey-Finance-App`.
 
 ## One-time setup
 
-Node 20+, Docker Desktop, AWS SAM CLI, and esbuild on PATH (`npm install -g esbuild` —
-the bundle step shells out to it).
+Node 20+, Docker Desktop, AWS SAM CLI, and esbuild on PATH (`npm install -g esbuild` — the
+bundle step shells out to it).
 
-## Local development (Plaid sandbox, no AWS needed)
+## Local development
 
 ```bash
-# 1. DynamoDB Local + tables (idempotent, safe to re-run)
 cd backend
 docker compose up -d
-bash scripts/create-local-tables.sh
+bash scripts/create-local-tables.sh      # idempotent
+cp env.local.json.example env.local.json # add your RentCast key
+npm install && npm run seed              # accounts, bills, starter plan
+npm run build                            # = npm run bundle && sam build
 
-# 2. Secrets: copy the template and fill in your Plaid sandbox keys
-cp env.local.json.example env.local.json
+# SAM resolves real AWS credentials at startup even for local runs, so pin dummies:
+AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local AWS_DEFAULT_REGION=us-east-1 \
+  sam local start-api --env-vars env.local.json --docker-network sam-local
+```
 
-# 3. Seed the household's known accounts, bills, and G2 goal
+```bash
+cd frontend
 npm install
-npm run seed
-
-# 4. Bundle the Lambdas and start the API on :3000
-npm run build          # = npm run bundle && sam build
-sam local start-api --env-vars env.local.json --docker-network sam-local
-
-# 5. Frontend on :5173 (separate terminal)
-cd ../frontend
-npm install
-cp .env.example .env   # set VITE_API_URL=/api and VITE_AUTH_MODE=local
+cp .env.example .env    # VITE_API_URL=/api and VITE_AUTH_MODE=local
 npm run dev
 ```
 
-`VITE_AUTH_MODE=local` skips Cognito (which can't run offline) and `VITE_API_URL=/api`
-routes calls through Vite's proxy so they're same-origin. The backend mirrors this:
-`shared/auth.js` assumes the one household when `AWS_SAM_LOCAL` is set.
+`VITE_AUTH_MODE=local` skips Cognito (which can't run offline) and `VITE_API_URL=/api` routes
+through Vite's proxy so calls are same-origin. The backend mirrors this: `shared/auth.js`
+assumes the one household when `AWS_SAM_LOCAL` is set.
 
-Invoke a single function without the API:
+`npm run seed` is also the cleanup path — it removes rows left by earlier versions of the
+app and re-seeds the household's real accounts and bills.
 
-```bash
-sam local invoke G1TrackerFunction -e functions/g1-tracker/test-events/get.json \
-  --env-vars env.local.json --docker-network sam-local
-```
-
-## Deploying to AWS
+## Deploying
 
 ```bash
-cd backend
-npm run build
-sam deploy --guided
+cd backend && npm run build
+sam deploy --stack-name lindsey-finance-app --region us-west-1 --resolve-s3 \
+  --capabilities CAPABILITY_IAM --parameter-overrides \
+    RentcastApiKey=... AllowedOrigin=https://d1r46125sashz0.cloudfront.net \
+    CjPhoneNumber=+1... VictoriaPhoneNumber=+1...
 ```
 
-You'll be prompted for `PlaidClientId`, `PlaidSecret`, `PlaidEnv`, `RentcastApiKey`,
-and `AllowedOrigin` (the deployed SPA's URL — leave `*` only for testing). These become
-encrypted Lambda environment variables; they are never committed. Keep `PlaidEnv` on
-`sandbox` until you deliberately move to real bank data.
+```bash
+cd frontend && npm run build   # uses .env.production
+aws s3 sync dist/ s3://lindsey-finance-app-frontendbucket-nrdiyaxwgkqx/ --region us-west-1 --delete
+aws cloudfront create-invalidation --distribution-id E15OUMHEJ3XUUZ --paths "/*"
+```
 
-Note: `~/.aws/config` currently defaults to `us-west-1` and its login session is the
-account **root** user. Create a scoped IAM user before deploying, and pick the region
-deliberately — the table names are global to the account/region pair.
+`.env.production` holds the API URL and Cognito IDs, and must set `VITE_AUTH_MODE=` explicitly
+— Vite *merges* env files rather than replacing them, so without that the local auth bypass
+from `.env` leaks into the production build.
+
+Deployed resources: API `https://w7spvuctfl.execute-api.us-west-1.amazonaws.com`, Cognito pool
+`us-west-1_UdSJ4qPjT` / client `uh2gguuesajed3hjsi4ut6hh6`. AWS CLI is currently authenticated
+as the account **root** user — worth replacing with a scoped IAM user.
 
 ## Status
 
-**Verified working** (run locally against DynamoDB Local + Plaid sandbox):
+Verified end to end against the live deployment and locally:
 
-- `sam build` succeeds; all 15 Lambdas bundle to 6.6 MB total
-- 9 GET and 3 write endpoints return 200 over HTTP
-- All 12 pages render with zero console errors at 344 / 390 / 884 / 1440 px
-- Snowball projection, cashflow running balance, utilization math, PCS profit
-  model, and task completion all produce correct results on the household's real numbers
+- Draft → score → commit moves the named balances by exactly the entered amounts, writes
+  snapshots, updates G1/G3, and refuses a second commit for the same period
+- Cashflow reports income/bills/net with no account balance involved
+- Stale drafts are purged on the daily job; committed plans survive
+- Rentals returns real listings, all 4+ bedrooms and ≤ $2,300, within 50 miles of Camp
+  Lejeune, in a single API call
+- All 11 pages render error-free at 344 / 390 / 884 / 1440 px
 
-**Blocked:** the Plaid keys in `env.local.json` are rejected by Plaid with
-`INVALID_API_KEYS`. The integration code is correct — it reaches Plaid and gets a
-well-formed reply — so this needs a valid **Sandbox** client ID/secret from the Plaid
-dashboard (secrets are per-environment; a Production secret will not work in Sandbox).
-
-**Not built yet:** Plaid Link in the browser (Settings only proves the backend can mint
-a link token), SNS phone-number subscriptions for reminders, and the first AWS deploy.
+**Not verified firsthand:** SMS reminder delivery (needs a real EventBridge tick; publishes
+are non-fatal so a failure can't block the draft purge).

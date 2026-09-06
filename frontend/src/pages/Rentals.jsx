@@ -5,7 +5,7 @@ import { useRentals } from '../api/hooks.js';
 import { money } from '../utils/format.js';
 
 export default function Rentals() {
-  const [filters, setFilters] = useState({ bedrooms: '3', bathrooms: '2', maxRent: '2200' });
+  const [filters, setFilters] = useState({ bedrooms: '4', maxRent: '2300' });
   const { data, refetch, isFetching } = useRentals(filters);
 
   const update = (key) => (e) => setFilters({ ...filters, [key]: e.target.value });
@@ -15,18 +15,14 @@ export default function Rentals() {
       <PageHeader title="Rentals" />
 
       <BlueprintCard>
-        <div className="card-title">Search — Camp Lejeune Area</div>
+        <div className="card-title">Search — within 50 miles of Camp Lejeune</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 'var(--space-3)', alignItems: 'end' }}>
           <div className="field">
-            <label htmlFor="bedrooms">Bedrooms</label>
+            <label htmlFor="bedrooms">Bedrooms (minimum)</label>
             <input id="bedrooms" className="input" type="number" value={filters.bedrooms} onChange={update('bedrooms')} />
           </div>
           <div className="field">
-            <label htmlFor="bathrooms">Bathrooms</label>
-            <input id="bathrooms" className="input" type="number" value={filters.bathrooms} onChange={update('bathrooms')} />
-          </div>
-          <div className="field">
-            <label htmlFor="maxRent">Max rent</label>
+            <label htmlFor="maxRent">Max monthly rent</label>
             <input id="maxRent" className="input" type="number" value={filters.maxRent} onChange={update('maxRent')} />
           </div>
           <button type="button" className="btn btn-primary" onClick={() => refetch()} disabled={isFetching}>

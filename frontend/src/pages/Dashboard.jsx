@@ -22,7 +22,7 @@ function useCashflowWindow() {
   const { data } = useCashflow(today.getFullYear(), today.getMonth() + 1);
   if (!data) return null;
 
-  const upcoming = Object.entries(data.dailyRunningBalance)
+  const upcoming = Object.entries(data.dailyNetPosition)
     .filter(([date]) => date >= today.toISOString().slice(0, 10))
     .slice(0, 7);
 
@@ -30,7 +30,7 @@ function useCashflowWindow() {
 
   return {
     lowestPointDate: data.lowestPointDate,
-    lowestPointBalance: data.lowestPointBalance,
+    lowestNetPosition: data.lowestNetPosition,
     bars: upcoming.map(([date, balance]) => ({
       day: new Date(`${date}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short' }),
       balance,
@@ -111,10 +111,10 @@ export default function Dashboard() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--space-4)', alignItems: 'start' }}>
           <BlueprintCard style={{ gap: 'var(--space-4)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
-              <div className="card-title">Cashflow — Next 7 Days</div>
+              <div className="card-title">Net Position — Next 7 Days</div>
               <div className="text-muted" style={{ fontSize: 11 }}>
                 {cashflow
-                  ? `Lowest: ${shortDate(cashflow.lowestPointDate)} · ${money(cashflow.lowestPointBalance)}`
+                  ? `Tightest: ${shortDate(cashflow.lowestPointDate)} · ${money(cashflow.lowestNetPosition)}`
                   : 'Loading…'}
               </div>
             </div>

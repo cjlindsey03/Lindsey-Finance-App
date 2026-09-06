@@ -9,7 +9,6 @@ const NAV_GROUPS = [
     items: [
       { to: '/', label: 'Dashboard', icon: 'home', end: true },
       { to: '/cashflow', label: 'Cashflow', icon: 'calendar' },
-      { to: '/transactions', label: 'Transactions', icon: 'list' },
     ],
   },
   {

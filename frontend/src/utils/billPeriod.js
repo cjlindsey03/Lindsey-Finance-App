@@ -1,34 +1,51 @@
-const PERIOD_DAYS = 14;
+// Pay periods are calendar half-months: the 1st-14th and the 15th-EOM,
+// matching the household's 1st/15th paydays. A period is identified by its
+// start date, e.g. "2026-09-01" or "2026-09-15". Mirrors
+// backend/shared/payPeriod.js.
 
-// Does a bill recurring on `dayOfMonth` land within the 14-day pay period
-// starting at `payDate`? Checks the month before/of/after the pay date so
-// periods that cross a month boundary (e.g. a plan starting the 24th) still
-// catch bills in the following month, clamping short months (Feb 30 -> 28).
-export function billOccursInPeriod(dayOfMonth, payDate) {
-  if (!dayOfMonth || !payDate) return false;
+export function getPeriod(dateIso) {
+  const d = new Date(`${dateIso}T00:00:00`);
+  const year = d.getFullYear();
+  const monthIndex = d.getMonth();
+  const month = String(monthIndex + 1).padStart(2, '0');
+  const isFirstHalf = d.getDate() <= 14;
+  const lastDay = new Date(year, monthIndex + 1, 0).getDate();
 
-  const start = new Date(`${payDate}T00:00:00`);
-  const end = new Date(start);
-  end.setDate(end.getDate() + (PERIOD_DAYS - 1));
-
-  for (const monthOffset of [-1, 0, 1]) {
-    const candidate = new Date(start.getFullYear(), start.getMonth() + monthOffset, 1);
-    const lastDayOfMonth = new Date(candidate.getFullYear(), candidate.getMonth() + 1, 0).getDate();
-    candidate.setDate(Math.min(dayOfMonth, lastDayOfMonth));
-    if (candidate >= start && candidate <= end) return true;
-  }
-  return false;
+  return {
+    periodKey: `${year}-${month}-${isFirstHalf ? '01' : '15'}`,
+    periodStart: `${year}-${month}-${isFirstHalf ? '01' : '15'}`,
+    periodEnd: isFirstHalf ? `${year}-${month}-14` : `${year}-${month}-${String(lastDay).padStart(2, '0')}`,
+    isFirstHalf,
+  };
 }
 
-// Sums active, non-income bills by category for whichever land in the pay
-// period starting at payDate — used to pre-fill a new Spending Plan.
-export function suggestAllocationsFromBills(bills, payDate) {
+export function currentPeriod() {
+  return getPeriod(new Date().toISOString().slice(0, 10));
+}
+
+export function billFallsInPeriod(dayOfMonth, period) {
+  if (!dayOfMonth || !period) return false;
+  return period.isFirstHalf ? dayOfMonth <= 14 : dayOfMonth >= 15;
+}
+
+// Sums active, non-income bills by category for whichever land in the given
+// pay period — used to pre-fill a new Spending Plan draft.
+export function suggestAllocationsFromBills(bills, period) {
   const sums = {};
   for (const bill of bills) {
     if (bill.isActive === false) continue;
     if (bill.category === 'Income') continue;
-    if (!billOccursInPeriod(bill.dayOfMonth, payDate)) continue;
+    if (!billFallsInPeriod(bill.dayOfMonth, period)) continue;
     sums[bill.category] = (sums[bill.category] ?? 0) + Math.abs(bill.amount);
   }
   return Object.fromEntries(Object.entries(sums).map(([k, v]) => [k, Math.round(v * 100) / 100]));
+}
+
+// Expected income for the period, from the income-type recurring bills.
+export function suggestIncomeFromBills(bills, period) {
+  return Math.round(
+    bills
+      .filter((b) => b.isActive !== false && b.amount > 0 && billFallsInPeriod(b.dayOfMonth, period))
+      .reduce((sum, b) => sum + b.amount, 0) * 100
+  ) / 100;
 }
