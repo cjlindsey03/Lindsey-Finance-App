@@ -147,6 +147,26 @@ export function useCommitSpendingPlan() {
   });
 }
 
+// Uncommitting reverses the balance changes a commit applied, so it needs the
+// same broad refetch a commit does.
+export function useUncommitSpendingPlan() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (planId) => api(`/spending-plans/${planId}/uncommit`, { method: 'POST' }),
+    onSuccess: () => queryClient.invalidateQueries(),
+  });
+}
+
+// Mints a fresh signed URL each time — the link expires in 15 minutes, so
+// there's nothing worth caching here.
+export function usePlanPdf() {
+  const api = useApi();
+  return useMutation({
+    mutationFn: (planId) => api(`/spending-plans/${planId}/pdf`),
+  });
+}
+
 export function useCreateAccount() {
   const api = useApi();
   const queryClient = useQueryClient();

@@ -356,6 +356,7 @@ Resources:
         - DynamoDBCrudPolicy: { TableName: !Ref AccountsTable }
         - DynamoDBCrudPolicy: { TableName: !Ref BalanceSnapshotsTable }
         - DynamoDBReadPolicy: { TableName: !Ref G2Table }
+        - S3CrudPolicy: { BucketName: !Ref ReportsBucket }
       Events:
         List:
           Type: HttpApi
@@ -363,6 +364,9 @@ Resources:
         GetOne:
           Type: HttpApi
           Properties: { ApiId: !Ref HouseholdApi, Path: "/spending-plans/{planId}", Method: get }
+        Pdf:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/spending-plans/{planId}/pdf", Method: get }
         Create:
           Type: HttpApi
           Properties: { ApiId: !Ref HouseholdApi, Path: "/spending-plans", Method: post }
@@ -375,6 +379,9 @@ Resources:
         Commit:
           Type: HttpApi
           Properties: { ApiId: !Ref HouseholdApi, Path: "/spending-plans/{planId}/commit", Method: post }
+        Uncommit:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HouseholdApi, Path: "/spending-plans/{planId}/uncommit", Method: post }
 
   CashflowFunction:
     Type: AWS::Serverless::Function

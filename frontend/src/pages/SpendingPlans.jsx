@@ -6,6 +6,8 @@ import {
   useSaveSpendingPlan,
   useDeleteSpendingPlan,
   useCommitSpendingPlan,
+  useUncommitSpendingPlan,
+  usePlanPdf,
   useRecurringBills,
   useAccounts,
 } from '../api/hooks.js';
@@ -53,6 +55,8 @@ export default function SpendingPlans() {
   const savePlan = useSaveSpendingPlan();
   const deletePlan = useDeleteSpendingPlan();
   const commitPlan = useCommitSpendingPlan();
+  const uncommitPlan = useUncommitSpendingPlan();
+  const planPdf = usePlanPdf();
 
   const [draft, setDraft] = useState(EMPTY_DRAFT);
   const [editingId, setEditingId] = useState(null);
@@ -61,6 +65,11 @@ export default function SpendingPlans() {
   const [payments, setPayments] = useState({});
   const [savingsAmount, setSavingsAmount] = useState('');
   const [commitResult, setCommitResult] = useState(null);
+  const [uncommitTarget, setUncommitTarget] = useState(null);
+
+  const viewPdf = (planId) => {
+    planPdf.mutate(planId, { onSuccess: (res) => window.open(res.url, '_blank', 'noopener') });
+  };
 
   const period = data?.planningPeriod ?? nextPeriod();
   const drafts = data?.drafts ?? [];
@@ -132,6 +141,15 @@ export default function SpendingPlans() {
   const paymentsTotal = Object.values(payments).reduce((sum, v) => sum + (Number(v) || 0), 0);
   const plannedDebt = Number(committing?.allocations?.Debt_Payment ?? 0);
 
+  const submitUncommit = () => {
+    uncommitPlan.mutate(uncommitTarget.planId, {
+      onSuccess: (res) => {
+        setCommitResult(res.changes ?? []);
+        setUncommitTarget(null);
+      },
+    });
+  };
+
   const submitCommit = () => {
     commitPlan.mutate(
       {
@@ -159,12 +177,44 @@ export default function SpendingPlans() {
         <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 22 }}>
           {shortDate(period.periodStart)} – {shortDate(period.periodEnd)}
         </div>
-        <div className="text-muted" style={{ fontSize: 12 }}>
-          {committedThisPeriod
-            ? `Committed: ${committedThisPeriod.label} (${committedThisPeriod.score})`
-            : `${drafts.length} draft${drafts.length === 1 ? '' : 's'} — none committed yet. Build one before the check lands; drafts clear once the period passes.`}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
+          <div className="text-muted" style={{ fontSize: 12 }}>
+            {committedThisPeriod
+              ? `Committed: ${committedThisPeriod.label} (${committedThisPeriod.score})`
+              : `${drafts.length} draft${drafts.length === 1 ? '' : 's'} — none committed yet. Build one before the check lands; drafts clear once the period passes.`}
+          </div>
+          {committedThisPeriod && (
+            <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+              <button type="button" className="btn btn-ghost" onClick={() => viewPdf(committedThisPeriod.planId)} disabled={planPdf.isPending}>
+                View PDF
+              </button>
+              <button type="button" className="btn btn-ghost" onClick={() => setUncommitTarget(committedThisPeriod)}>
+                Uncommit
+              </button>
+            </div>
+          )}
         </div>
       </BlueprintCard>
+
+      {uncommitTarget && (
+        <BlueprintCard>
+          <div className="card-title">Uncommit “{uncommitTarget.label}”?</div>
+          <p className="card-body">
+            This reverses the balance changes this plan applied — payments go back onto their accounts, savings
+            comes back out — and turns it back into an editable draft. You can then commit a different plan for
+            this period instead.
+          </p>
+          <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+            <button type="button" className="btn btn-primary" onClick={submitUncommit} disabled={uncommitPlan.isPending}>
+              {uncommitPlan.isPending ? 'Reversing…' : 'Uncommit and reverse balances'}
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={() => setUncommitTarget(null)}>Cancel</button>
+          </div>
+          {uncommitPlan.isError && (
+            <p style={{ fontSize: 12, color: 'var(--color-overspend)' }}>{uncommitPlan.error?.message}</p>
+          )}
+        </BlueprintCard>
+      )}
 
       {commitResult && (
         <BlueprintCard>
@@ -264,7 +314,8 @@ export default function SpendingPlans() {
                 {money(plan.income)} income · {percent(plan.scoreBreakdown?.combinedPct, 1)} to debt + savings
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+            <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+              <button type="button" className="btn btn-ghost" onClick={() => viewPdf(plan.planId)} disabled={planPdf.isPending}>View PDF</button>
               <button type="button" className="btn btn-ghost" onClick={() => startEditing(plan)}>Edit</button>
               <button type="button" className="btn btn-ghost" onClick={() => deletePlan.mutate(plan.planId)}>Delete</button>
               {!committedThisPeriod && (
@@ -346,7 +397,7 @@ export default function SpendingPlans() {
           <div style={{ overflowX: 'auto' }}>
             <table className="table">
               <thead>
-                <tr><th>Period</th><th>Plan</th><th>Income</th><th>Score</th><th>Committed</th></tr>
+                <tr><th>Period</th><th>Plan</th><th>Income</th><th>Score</th><th>Committed</th><th /></tr>
               </thead>
               <tbody>
                 {committed.map((plan) => (
@@ -356,6 +407,16 @@ export default function SpendingPlans() {
                     <td>{money(plan.income)}</td>
                     <td><span className="tag tag-outline">{plan.score}</span></td>
                     <td className="text-muted">{plan.committedAt ? new Date(plan.committedAt).toLocaleDateString() : '—'}</td>
+                    <td style={{ display: 'flex', gap: 'var(--space-2)' }}>
+                      <button type="button" className="btn btn-ghost" onClick={() => viewPdf(plan.planId)} disabled={planPdf.isPending}>
+                        View PDF
+                      </button>
+                      {plan.periodKey === period.periodKey && (
+                        <button type="button" className="btn btn-ghost" onClick={() => setUncommitTarget(plan)}>
+                          Uncommit
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
