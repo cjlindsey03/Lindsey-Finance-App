@@ -1,7 +1,13 @@
-# Personal/PII documents — never commit
-Charles LES.pdf
-myFICO*.pdf
-V Paystub *.jpg
+# Personal/PII documents — never commit.
+# Blanket-ignore PDFs and photos: LES, PCS vouchers and credit reports carry
+# SSN, EDIPI, bank routing and dependents' DOBs, and it's far too easy to drop
+# a new one in here and commit it by accident. Force-add with `git add -f` if a
+# PDF ever genuinely belongs in the repo.
+*.pdf
+*.jpg
+*.jpeg
+*.png
+!frontend/public/**
 Financial Account Status.md
 
 # Node

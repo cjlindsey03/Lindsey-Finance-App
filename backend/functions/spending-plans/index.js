@@ -2,7 +2,7 @@ const { randomUUID } = require('crypto');
 const { queryByPK, get, put, del } = require('../../shared/db');
 const { getHouseholdContext } = require('../../shared/auth');
 const { ok, badRequest, notFound, noContent, parseBody } = require('../../shared/http');
-const { getPeriod, currentPeriod } = require('../../shared/payPeriod');
+const { getPeriod, currentPeriod, nextPeriod } = require('../../shared/payPeriod');
 const { writeBalanceSnapshot } = require('../../shared/snapshots');
 
 const SPENDING_PLANS_TABLE = process.env.SPENDING_PLANS_TABLE;
@@ -48,16 +48,19 @@ function scorePlan({ income, allocations = {}, g1Extra = 0, g2Allocation = 0 }) 
 
 async function listPlans(householdId) {
   const plans = await queryByPK(SPENDING_PLANS_TABLE, householdId);
-  const { periodKey } = currentPeriod();
+  // You plan for the period that hasn't started yet — the aim is a plan in
+  // hand when the check lands, not a budget for a period already underway.
+  const planning = nextPeriod();
 
   const drafts = plans
-    .filter((p) => p.status === 'draft' && p.periodKey === periodKey)
+    .filter((p) => p.status === 'draft' && p.periodKey === planning.periodKey)
     .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
   const committed = plans
     .filter((p) => p.status === 'committed')
     .sort((a, b) => (b.periodKey ?? '').localeCompare(a.periodKey ?? ''));
 
   return ok({
+    planningPeriod: planning,
     currentPeriod: currentPeriod(),
     drafts: drafts.map(toPublicPlan),
     committed: committed.map(toPublicPlan),
@@ -69,7 +72,7 @@ async function savePlan(householdId, planId, body) {
   if (planId && !existing) return notFound('Plan not found');
   if (existing?.status === 'committed') return badRequest('A committed plan cannot be edited');
 
-  const period = body.periodStart ? getPeriod(body.periodStart) : existing ? getPeriod(existing.periodStart) : currentPeriod();
+  const period = body.periodStart ? getPeriod(body.periodStart) : existing ? getPeriod(existing.periodStart) : nextPeriod();
   const { score, scoreBreakdown } = scorePlan(body);
   const now = new Date().toISOString();
 

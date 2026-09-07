@@ -27,10 +27,20 @@ function currentPeriod() {
   return getPeriod(new Date().toISOString().slice(0, 10));
 }
 
+// The period after the one containing `dateIso`. Planning targets this: the
+// goal is to have a plan ready before the paycheck lands, not to budget a
+// period that's already half spent.
+function nextPeriod(dateIso = new Date().toISOString().slice(0, 10)) {
+  const period = getPeriod(dateIso);
+  const end = new Date(`${period.periodEnd}T00:00:00`);
+  end.setDate(end.getDate() + 1);
+  return getPeriod(end.toISOString().slice(0, 10));
+}
+
 // Does a bill recurring on `dayOfMonth` fall inside this period?
 function billFallsInPeriod(dayOfMonth, period) {
   if (!dayOfMonth) return false;
   return period.isFirstHalf ? dayOfMonth <= 14 : dayOfMonth >= 15;
 }
 
-module.exports = { getPeriod, currentPeriod, billFallsInPeriod };
+module.exports = { getPeriod, currentPeriod, nextPeriod, billFallsInPeriod };

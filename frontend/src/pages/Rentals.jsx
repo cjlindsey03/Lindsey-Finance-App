@@ -4,11 +4,91 @@ import PageHeader from '../components/PageHeader.jsx';
 import { useRentals } from '../api/hooks.js';
 import { money } from '../utils/format.js';
 
+function ListingImage({ listing }) {
+  const [failed, setFailed] = useState(false);
+
+  const placeholder = (
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'var(--color-surface-2)',
+        color: 'color-mix(in srgb, var(--color-text) 45%, transparent)',
+        fontSize: 11,
+        textAlign: 'center',
+        padding: 'var(--space-3)',
+      }}
+    >
+      No street view available
+    </div>
+  );
+
+  return (
+    <div style={{ width: 260, minWidth: 260, height: 170, overflow: 'hidden', border: '1px solid var(--color-divider)' }}>
+      {listing.streetViewUrl && !failed ? (
+        <img
+          src={listing.streetViewUrl}
+          alt={`Street view of ${listing.formattedAddress ?? 'listing'}`}
+          loading="lazy"
+          onError={() => setFailed(true)}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+        />
+      ) : (
+        placeholder
+      )}
+    </div>
+  );
+}
+
+function ListingCard({ listing }) {
+  return (
+    <BlueprintCard style={{ flexDirection: 'row', gap: 'var(--space-4)', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+      <ListingImage listing={listing} />
+
+      <div style={{ flex: 1, minWidth: 220, display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+          <div className="card-title" style={{ fontSize: 18 }}>{listing.formattedAddress ?? 'Address unavailable'}</div>
+          <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 24, color: 'var(--color-accent)' }}>
+            {money(listing.price)}<span className="text-muted" style={{ fontSize: 13 }}>/mo</span>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', fontSize: 13 }}>
+          <span>{listing.bedrooms ?? '—'} bd</span>
+          <span>{listing.bathrooms ?? '—'} ba</span>
+          <span>{listing.squareFootage ? `${listing.squareFootage.toLocaleString()} sqft` : '— sqft'}</span>
+          {listing.propertyType && <span className="text-muted">{listing.propertyType}</span>}
+          {listing.daysOnMarket != null && (
+            <span className="text-muted">{listing.daysOnMarket} days on market</span>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', marginTop: 'auto' }}>
+          {listing.searchUrl && (
+            <a className="btn btn-secondary" href={listing.searchUrl} target="_blank" rel="noreferrer">
+              Search this address
+            </a>
+          )}
+          {listing.mapUrl && (
+            <a className="btn btn-ghost" href={listing.mapUrl} target="_blank" rel="noreferrer">
+              Map
+            </a>
+          )}
+        </div>
+      </div>
+    </BlueprintCard>
+  );
+}
+
 export default function Rentals() {
   const [filters, setFilters] = useState({ bedrooms: '4', maxRent: '2300' });
   const { data, refetch, isFetching } = useRentals(filters);
 
   const update = (key) => (e) => setFilters({ ...filters, [key]: e.target.value });
+  const listings = data?.listings ?? [];
 
   return (
     <>
@@ -29,33 +109,35 @@ export default function Rentals() {
             {isFetching ? 'Searching…' : 'Search'}
           </button>
         </div>
+
+        {/* Being straight about what these links are — the data source has no
+            listing pages, so there is nowhere to link directly to. */}
+        <p className="text-muted" style={{ fontSize: 11 }}>
+          Photos are Google Street View of the address, not listing photos. The data source (RentCast) provides no
+          direct listing links, so "Search this address" opens a web search for that property instead.
+        </p>
+
         {data?.cachedAt && (
           <div className="text-muted" style={{ fontSize: 11 }}>
-            Last refreshed {new Date(data.cachedAt).toLocaleString()}
+            {listings.length} match{listings.length === 1 ? '' : 'es'} · refreshed{' '}
+            {new Date(data.cachedAt).toLocaleString()}
             {data.fromCache ? ' (cached)' : ''}
           </div>
         )}
       </BlueprintCard>
 
-      {data?.listings?.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 'var(--space-4)' }}>
-          {data.listings.map((listing) => (
-            <BlueprintCard key={listing.id ?? listing.formattedAddress} style={{ gap: 'var(--space-2)' }}>
-              <div className="card-kicker">{money(listing.price)} / mo</div>
-              <div className="card-title" style={{ fontSize: 15 }}>{listing.formattedAddress}</div>
-              <div className="text-muted" style={{ fontSize: 12 }}>
-                {listing.bedrooms ?? '—'} bd · {listing.bathrooms ?? '—'} ba
-                {listing.squareFootage ? ` · ${listing.squareFootage} sqft` : ''}
-              </div>
-              {listing.daysOnMarket != null && (
-                <div className="text-muted" style={{ fontSize: 11 }}>{listing.daysOnMarket} days on market</div>
-              )}
-            </BlueprintCard>
+      {listings.length > 0 && (
+        <div
+          className="hf-scroll"
+          style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', maxHeight: '70vh', overflowY: 'auto', paddingRight: 'var(--space-2)' }}
+        >
+          {listings.map((listing) => (
+            <ListingCard key={listing.id ?? listing.formattedAddress} listing={listing} />
           ))}
         </div>
       )}
 
-      {data && !data.listings?.length && (
+      {data && !listings.length && (
         <BlueprintCard><p className="card-body">No listings matched. Try widening the filters.</p></BlueprintCard>
       )}
     </>

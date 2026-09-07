@@ -4,6 +4,7 @@ const { ok } = require('../../shared/http');
 
 const RENTALS_CACHE_TABLE = process.env.RENTALS_CACHE_TABLE;
 const RENTCAST_API_KEY = process.env.RENTCAST_API_KEY;
+const GOOGLE_STREETVIEW_KEY = process.env.GOOGLE_STREETVIEW_KEY;
 
 // Camp Lejeune, NC — searched as a radius rather than a zip list so one API
 // call covers Jacksonville and the surrounding towns (RentCast's free tier is
@@ -31,9 +32,33 @@ async function fetchListings({ minBedrooms, maxRent }) {
   // RentCast documents range/multi-value support for these filters but not the
   // literal syntax, so the results are re-filtered here. A syntax mismatch can
   // then never surface a 2-bed or an over-budget listing.
-  return (Array.isArray(listings) ? listings : []).filter(
-    (l) => (l.bedrooms ?? 0) >= minBedrooms && (l.price ?? Infinity) <= maxRent
-  );
+  return (Array.isArray(listings) ? listings : [])
+    .filter((l) => (l.bedrooms ?? 0) >= minBedrooms && (l.price ?? Infinity) <= maxRent);
+}
+
+// RentCast returns no photos and no listing URL — only property metadata plus
+// coordinates. So the photo is Street View of the actual address, and the link
+// is a constructed address search rather than a real listing page. The UI has
+// to say so; pretending it's a listing link would be a lie.
+function decorate(listing) {
+  const { latitude, longitude, formattedAddress } = listing;
+
+  const streetViewUrl =
+    GOOGLE_STREETVIEW_KEY && latitude && longitude
+      ? `https://maps.googleapis.com/maps/api/streetview?size=640x360&location=${latitude},${longitude}` +
+        `&fov=80&pitch=0&key=${GOOGLE_STREETVIEW_KEY}`
+      : null;
+
+  const searchUrl = formattedAddress
+    ? `https://www.google.com/search?q=${encodeURIComponent(`${formattedAddress} for rent`)}`
+    : null;
+
+  const mapUrl =
+    latitude && longitude
+      ? `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`
+      : null;
+
+  return { ...listing, streetViewUrl, searchUrl, mapUrl, hasDirectListingUrl: false };
 }
 
 exports.handler = async (event) => {
@@ -46,7 +71,7 @@ exports.handler = async (event) => {
   const cached = await get(RENTALS_CACHE_TABLE, { PK: householdId, SK: key });
   if (cached && Date.now() - new Date(cached.cachedAt).getTime() < CACHE_TTL_MS) {
     return ok({
-      listings: cached.listings,
+      listings: cached.listings.map(decorate),
       cachedAt: cached.cachedAt,
       fromCache: true,
       criteria: { minBedrooms, maxRent, radiusMiles: SEARCH_RADIUS_MILES },
@@ -65,7 +90,7 @@ exports.handler = async (event) => {
   });
 
   return ok({
-    listings,
+    listings: listings.map(decorate),
     cachedAt,
     fromCache: false,
     criteria: { minBedrooms, maxRent, radiusMiles: SEARCH_RADIUS_MILES },

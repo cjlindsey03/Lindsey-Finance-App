@@ -6,31 +6,58 @@ import { money } from '../utils/format.js';
 
 const INITIAL_FORM = {
   truckType: '26ft',
-  truckDailyRate: 40,
-  truckMileageRate: 0.99,
-  towEquipment: 'tow_dolly',
-  towCost: 310,
+  // One quoted figure for the whole rental — that's how the rental companies
+  // actually quote it, rather than separate daily and per-mile rates.
+  quotedTruckRental: 1800,
+  materialCost: 250,
+
   routeMiles: 2800,
   tripDays: 4,
-  travelers: 2,
+  memberTravelDays: 4,
+  dependentTravelDays: 4,
+  povCount: 1,
+  povMPG: 18,
+
   hotelNights: 2,
   costPerNight: 140,
+  dailyFoodBudget: 120,
+
   estimatedHHGWeight: 8000,
-  materialWeightLbs: 300,
-  materialCost: 250,
-  povMPG: 18,
-  dlaAmount: 2366,
+  // Blank means "use the fitted estimate"; fill it in once TMO gives you the real one.
+  actualGcc: '',
+
   gasPriceTier: 'mid',
 };
 
 const BREAKDOWN_ROWS = [
-  { key: 'truckRentalCost', label: 'Truck rental' },
-  { key: 'towCost', label: 'Tow equipment' },
+  { key: 'quotedTruckRental', label: 'Truck rental' },
   { key: 'fuelCost_truck', label: 'Fuel (truck)' },
   { key: 'fuelCost_pov', label: 'Fuel (POV)' },
   { key: 'hotelCost', label: 'Hotels' },
-  { key: 'foodCost', label: 'Food (M&IE)' },
+  { key: 'foodCost', label: 'Food' },
   { key: 'materialCost', label: 'Materials' },
+];
+
+const ENTITLEMENT_ROWS = [
+  { key: 'dla', label: 'Dislocation allowance' },
+  { key: 'malt', label: 'MALT (mileage)' },
+  { key: 'memberPerDiem', label: 'Per diem — member' },
+  { key: 'dependentPerDiem', label: 'Per diem — dependents' },
+];
+
+const NUMBER_FIELDS = [
+  ['routeMiles', 'Route miles'],
+  ['tripDays', 'Trip days'],
+  ['quotedTruckRental', 'Quoted truck rental (whole trip)'],
+  ['estimatedHHGWeight', 'HHG weight (lbs)'],
+  ['memberTravelDays', 'Travel days — member'],
+  ['dependentTravelDays', 'Travel days — dependents'],
+  ['povCount', 'POVs driven'],
+  ['povMPG', 'POV mpg'],
+  ['hotelNights', 'Hotel nights'],
+  ['costPerNight', 'Cost per night (quoted)'],
+  ['dailyFoodBudget', 'Food per day'],
+  ['materialCost', 'Material cost'],
 ];
 
 export default function PcsSimulator() {
@@ -47,48 +74,37 @@ export default function PcsSimulator() {
 
   const results = runSimulation.data?.results ?? runSimulation.data?.simulation?.results;
 
-  const toPayload = (extra = {}) => ({
-    ...form,
-    truckDailyRate: Number(form.truckDailyRate),
-    truckMileageRate: Number(form.truckMileageRate),
-    towCost: Number(form.towCost),
-    routeMiles: Number(form.routeMiles),
-    tripDays: Number(form.tripDays),
-    travelers: Number(form.travelers),
-    estimatedHHGWeight: Number(form.estimatedHHGWeight),
-    materialWeightLbs: Number(form.materialWeightLbs),
-    materialCost: Number(form.materialCost),
-    povMPG: Number(form.povMPG),
-    dlaAmount: Number(form.dlaAmount),
-    hotelStops: [{ nights: Number(form.hotelNights), costPerNight: Number(form.costPerNight) }],
-    ...extra,
-  });
+  const toPayload = (extra = {}) => {
+    const numeric = Object.fromEntries(NUMBER_FIELDS.map(([key]) => [key, Number(form[key])]));
+    return {
+      truckType: form.truckType,
+      gasPriceTier: form.gasPriceTier,
+      ...numeric,
+      // Only send an override when one was actually typed — an empty string
+      // would otherwise coerce to 0 and wipe out the estimate.
+      ...(form.actualGcc !== '' ? { actualGcc: Number(form.actualGcc) } : {}),
+      hotelStops: [{ nights: Number(form.hotelNights), costPerNight: Number(form.costPerNight) }],
+      ...extra,
+    };
+  };
 
   const update = (key) => (e) => setForm({ ...form, [key]: e.target.value });
   const maxCost = results ? Math.max(...BREAKDOWN_ROWS.map((r) => results[r.key] ?? 0), 1) : 1;
-
-  const numberFields = [
-    ['routeMiles', 'Route miles'],
-    ['tripDays', 'Trip days'],
-    ['travelers', 'Travelers'],
-    ['dlaAmount', 'DLA amount'],
-    ['hotelNights', 'Hotel nights'],
-    ['costPerNight', 'Cost per night (quoted)'],
-    ['truckDailyRate', 'Truck daily rate'],
-    ['truckMileageRate', 'Truck per-mile rate'],
-    ['towCost', 'Tow equipment cost'],
-    ['estimatedHHGWeight', 'HHG weight (lbs)'],
-    ['materialWeightLbs', 'Material weight (lbs)'],
-    ['materialCost', 'Material cost'],
-  ];
 
   return (
     <>
       <PageHeader title="PCS Simulator" />
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 'var(--space-4)', alignItems: 'start' }}>
+      {/* min() rather than a bare 340px so the column can still shrink on a
+          narrow phone instead of forcing the page to scroll sideways. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(340px, 100%), 1fr))', gap: 'var(--space-4)', alignItems: 'start' }}>
         <BlueprintCard>
           <div className="card-title">Run Inputs</div>
+          <p className="text-muted" style={{ fontSize: 11 }}>
+            Entitlements (DLA, MALT, per diem) are calculated from your grade and travelling party — O-1 with
+            dependents — so there's nothing to enter for them.
+          </p>
+
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 'var(--space-3)' }}>
             <div className="field">
               <label htmlFor="truckType">Truck type</label>
@@ -98,15 +114,7 @@ export default function PcsSimulator() {
                 ))}
               </select>
             </div>
-            <div className="field">
-              <label htmlFor="towEquipment">Tow equipment</label>
-              <select id="towEquipment" className="input" value={form.towEquipment} onChange={update('towEquipment')}>
-                <option value="tow_dolly">Tow dolly</option>
-                <option value="auto_transport">Auto transport</option>
-                <option value="toy_hauler">Toy hauler</option>
-              </select>
-            </div>
-            {numberFields.map(([key, labelText]) => (
+            {NUMBER_FIELDS.map(([key, labelText]) => (
               <div className="field" key={key}>
                 <label htmlFor={key}>{labelText}</label>
                 <input id={key} className="input" type="number" value={form[key]} onChange={update(key)} />
@@ -124,6 +132,30 @@ export default function PcsSimulator() {
                 </label>
               ))}
             </div>
+            <div className="text-muted" style={{ fontSize: 11 }}>
+              Live weekly EIA prices — mid is the national average, low and high are the cheapest and priciest
+              refining regions.
+              {results?.gasPricePerGallon != null && (
+                <> Using ${results.gasPricePerGallon.toFixed(2)}/gal ({results.gasPriceSource}
+                {results.gasPriceAsOf ? `, ${results.gasPriceAsOf}` : ''}).</>
+              )}
+            </div>
+          </div>
+
+          <div className="field">
+            <label htmlFor="actualGcc">Actual GCC from TMO (optional)</label>
+            <input
+              id="actualGcc"
+              className="input"
+              type="number"
+              value={form.actualGcc}
+              onChange={update('actualGcc')}
+              placeholder="Leave blank to estimate"
+            />
+            <div className="text-muted" style={{ fontSize: 11 }}>
+              The government's constructed cost sets your PPM payment. Until TMO gives you the real figure it's
+              estimated from your weight and distance — expect roughly ±25%.
+            </div>
           </div>
 
           <button
@@ -138,7 +170,7 @@ export default function PcsSimulator() {
           <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'flex-end' }}>
             <div className="field" style={{ flex: 1 }}>
               <label htmlFor="label">Save this run as</label>
-              <input id="label" className="input" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. 26ft + dolly" />
+              <input id="label" className="input" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. 26ft, 8000 lbs" />
             </div>
             <button
               type="button"
@@ -159,7 +191,7 @@ export default function PcsSimulator() {
             </div>
             <div className="text-muted" style={{ fontSize: 11 }}>
               {results
-                ? `Net PPM profit ${money(results.netPPMProfit)} + DLA ${money(results.dlaAmount)}`
+                ? `Net PPM profit ${money(results.netPPMProfit)} + entitlements ${money(results.totalEntitlements)}`
                 : 'Run a calculation to see results'}
             </div>
           </BlueprintCard>
@@ -188,22 +220,64 @@ export default function PcsSimulator() {
                 </div>
               );
             })}
+            <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--color-divider)', paddingTop: 'var(--space-2)', fontWeight: 600, fontSize: 13 }}>
+              <span>Total out of pocket</span>
+              <span>{results ? money(results.totalExpenses) : '—'}</span>
+            </div>
           </BlueprintCard>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 'var(--space-4)' }}>
-            <BlueprintCard elevated={false} style={{ padding: 'var(--space-3)', gap: 'var(--space-1)' }}>
-              <div className="card-kicker">Gov Constructive Cost</div>
-              <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 20 }}>
-                {results ? money(results.govConstructiveCost) : '—'}
+          <BlueprintCard>
+            <div className="card-title">Entitlements</div>
+            <p className="text-muted" style={{ fontSize: 11 }}>
+              Paid on top of the PPM, regardless of how the move goes.
+            </p>
+            {ENTITLEMENT_ROWS.map((row) => (
+              <div key={row.key} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                <span>{row.label}</span>
+                <span>{results ? money(results[row.key]) : '—'}</span>
               </div>
-            </BlueprintCard>
-            <BlueprintCard elevated={false} style={{ padding: 'var(--space-3)', gap: 'var(--space-1)' }}>
-              <div className="card-kicker">Tax Reserve (22%)</div>
-              <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 20 }}>
-                {results ? money(results.taxReserve22Pct) : '—'}
+            ))}
+            <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--color-divider)', paddingTop: 'var(--space-2)', fontWeight: 600, fontSize: 13 }}>
+              <span>Total entitlements</span>
+              <span>{results ? money(results.totalEntitlements) : '—'}</span>
+            </div>
+          </BlueprintCard>
+
+          <BlueprintCard>
+            <div className="card-title">PPM Payment</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+              <span>
+                Gov constructed cost
+                {results?.gccIsEstimate && <span className="text-muted"> (estimate)</span>}
+              </span>
+              <span>{results ? money(results.govConstructiveCost) : '—'}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+              <span>Less documented expenses</span>
+              <span>{results ? `− ${money(results.totalExpenses)}` : '—'}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+              <span>Taxable profit</span>
+              <span>{results ? money(results.taxableProfit) : '—'}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+              <span>Tax withheld (22%)</span>
+              <span>{results ? `− ${money(results.taxWithheld)}` : '—'}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--color-divider)', paddingTop: 'var(--space-2)', fontWeight: 600, fontSize: 13 }}>
+              <span>Net PPM profit</span>
+              <span>{results ? money(results.netPPMProfit) : '—'}</span>
+            </div>
+            {results && (
+              <div className="text-muted" style={{ fontSize: 11 }}>
+                Billable weight {results.billableWeight?.toLocaleString()} lbs of a{' '}
+                {results.weightAllowance?.toLocaleString()} lb allowance.
+                {results.weightOverAllowance > 0 && (
+                  <> You're {results.weightOverAllowance.toLocaleString()} lbs over — the excess isn't paid.</>
+                )}
               </div>
-            </BlueprintCard>
-          </div>
+            )}
+          </BlueprintCard>
 
           {savedRuns?.simulations?.length > 0 && (
             <BlueprintCard>

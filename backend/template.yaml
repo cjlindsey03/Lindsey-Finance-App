@@ -6,6 +6,17 @@ Parameters:
   RentcastApiKey:
     Type: String
     NoEcho: true
+  EiaApiKey:
+    Type: String
+    NoEcho: true
+    Description: EIA Open Data key for live weekly gasoline prices.
+  GoogleStreetViewKey:
+    Type: String
+    NoEcho: true
+    Description: >-
+      Google Street View Static key for rental photos. This one reaches the
+      browser in image URLs, so it must be restricted by HTTP referrer and to
+      the Street View Static API in the Google console.
   AllowedOrigin:
     Type: String
     Description: Origin allowed to call the API (the deployed SPA's CloudFront URL).
@@ -43,6 +54,8 @@ Globals:
         REPORTS_BUCKET: !Ref ReportsBucket
         REMINDERS_TOPIC_ARN: !Ref RemindersTopic
         RENTCAST_API_KEY: !Ref RentcastApiKey
+        EIA_API_KEY: !Ref EiaApiKey
+        GOOGLE_STREETVIEW_KEY: !Ref GoogleStreetViewKey
         COGNITO_USER_POOL_ID: !Ref HouseholdUserPool
 
 Resources:
@@ -437,8 +450,10 @@ Resources:
     Properties:
       CodeUri: dist/PcsSimulatorFunction/
       Handler: index.handler
+      Timeout: 30
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref PcsSimulationsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref RentalsCacheTable }
       Events:
         List:
           Type: HttpApi

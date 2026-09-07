@@ -87,9 +87,32 @@ function NavItem({ to, label, icon, end, onNavigate }) {
   );
 }
 
+const COLLAPSE_KEY = 'hf.sidebarCollapsed';
+
 export default function AppShell({ children }) {
   const [navOpen, setNavOpen] = useState(false);
+  // Remembered per browser so full-screen stays full-screen across reloads.
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(COLLAPSE_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
   const { pathname } = useLocation();
+
+  const toggleCollapsed = () => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(COLLAPSE_KEY, String(next));
+      } catch {
+        // Private browsing can refuse storage; the toggle still works for
+        // this session.
+      }
+      return next;
+    });
+  };
 
   // Close the drawer on navigation and on Escape.
   useEffect(() => setNavOpen(false), [pathname]);
@@ -100,7 +123,18 @@ export default function AppShell({ children }) {
   }, []);
 
   return (
-    <div className="shell">
+    <div className="shell" data-collapsed={collapsed}>
+      <button
+        type="button"
+        className="btn btn-secondary btn-icon shell-collapse-toggle"
+        aria-label={collapsed ? 'Show navigation' : 'Hide navigation'}
+        aria-expanded={!collapsed}
+        title={collapsed ? 'Show navigation' : 'Hide navigation'}
+        onClick={toggleCollapsed}
+      >
+        <Icon name="list" size={18} />
+      </button>
+
       <div className="shell-topbar">
         <button
           type="button"
@@ -130,6 +164,16 @@ export default function AppShell({ children }) {
               lindsey-001
             </div>
           </div>
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon shell-sidebar-collapse"
+            style={{ marginLeft: 'auto' }}
+            aria-label="Hide navigation"
+            title="Hide navigation"
+            onClick={toggleCollapsed}
+          >
+            ‹
+          </button>
         </div>
 
         {NAV_GROUPS.map((group) => (

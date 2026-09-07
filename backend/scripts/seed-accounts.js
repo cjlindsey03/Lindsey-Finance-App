@@ -52,6 +52,9 @@ const ACCOUNTS = [
 const RECURRING_BILLS = [
   { id: 'victoria_pay_1', desc: 'Victoria pay', category: 'Income', amount: 2098.84, day: 1, type: 'income' },
   { id: 'victoria_pay_15', desc: 'Victoria pay', category: 'Income', amount: 2098.84, day: 15, type: 'income' },
+  // CJ's semi-monthly net, from the Aug 2026 LES forecasted pay lines.
+  { id: 'cj_pay_1', desc: 'CJ pay', category: 'Income', amount: 1803.66, day: 1, type: 'income' },
+  { id: 'cj_pay_15', desc: 'CJ pay', category: 'Income', amount: 1803.66, day: 15, type: 'income' },
   { id: 'spectrum_internet', desc: 'Spectrum internet', category: 'Internet', amount: -80, day: 5, type: 'bill' },
   { id: 'tmobile_cj', desc: 'T-Mobile (CJ)', category: 'Phone', amount: -206, day: 24, type: 'bill' },
   { id: 'tmobile_victoria', desc: 'T-Mobile (Victoria)', category: 'Phone', amount: -140, day: 24, type: 'bill' },
@@ -153,7 +156,7 @@ async function main() {
 
   await doc.send(new PutCommand({
     TableName: 'g2_tracker',
-    Item: { PK: HOUSEHOLD_ID, targetAmount: 12000, savingsAccountId: 'manual_joint_savings',
+    Item: { PK: HOUSEHOLD_ID, targetAmount: 1500, savingsAccountId: 'manual_joint_savings',
             monthlyContribution: 500, pcsDate: '2026-12-15', notes: '', updatedAt: new Date().toISOString() },
   }));
   console.log('seeded G2 tracker');

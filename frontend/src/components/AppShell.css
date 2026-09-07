@@ -2,6 +2,7 @@
    slide-over drawer below 900px — the folded Z Fold (344px) and iPhone
    can't spare 238px for permanent navigation. */
 .shell {
+  position: relative;
   display: flex;
   min-height: 100vh;
   background: var(--color-bg);
@@ -33,6 +34,22 @@
 
 .shell-topbar { display: none; }
 .shell-backdrop { display: none; }
+
+/* Desktop collapse. Two controls rather than one that moves: the in-sidebar
+   button while open, and a floating one once the sidebar is gone so there is
+   always a visible way back. */
+.shell-collapse-toggle { position: absolute; top: var(--space-4); left: var(--space-3); z-index: 20; display: none; }
+.shell[data-collapsed='true'] .shell-collapse-toggle { display: inline-flex; }
+.shell[data-collapsed='true'] .shell-sidebar { display: none; }
+.shell[data-collapsed='true'] .shell-main { padding-left: calc(var(--space-6) + 46px); }
+
+@media (max-width: 899px) {
+  /* The drawer already handles small screens, so neither desktop control applies. */
+  .shell-collapse-toggle { display: none !important; }
+  .shell-sidebar-collapse { display: none; }
+  .shell[data-collapsed='true'] .shell-sidebar { display: flex; }
+  .shell[data-collapsed='true'] .shell-main { padding-left: var(--space-4); }
+}
 
 @media (max-width: 899px) {
   .shell { flex-direction: column; }

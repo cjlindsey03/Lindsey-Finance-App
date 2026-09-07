@@ -108,7 +108,35 @@ Verified end to end against the live deployment and locally:
 - Stale drafts are purged on the daily job; committed plans survive
 - Rentals returns real listings, all 4+ bedrooms and ≤ $2,300, within 50 miles of Camp
   Lejeune, in a single API call
-- All 11 pages render error-free at 344 / 390 / 884 / 1440 px
+- The PCS simulator reproduces the settled Quantico → Twentynine Palms vouchers to within
+  $0.64 on the $6,068.51 PPM, and returns DLA at exactly $3,085.23
+- Gas prices come back live from EIA (national average and PADD spread), cached 24h
+- All 12 pages render error-free at 344 / 390 / 884 / 1440 px
+
+## PCS simulator accuracy
+
+`shared/pcsRates.js` holds every entitlement constant in one place, each annotated with its
+source and — where one exists — the settled voucher that confirms it. DLA, the $178/day
+member per-diem rate, the 75% / 50% dependent tiers, and the 12,000 lb O-1 weight allowance
+are all confirmed against real payments rather than taken from a published table.
+
+The one figure that is genuinely an **estimate** is the Government Constructed Cost, which
+sets the PPM payment. There is no public API for it — TMO computes it from DoD contract rate
+tables by lane, weight and season. A flat per-pound-per-mile factor does not work: a 2,440 lb
+move priced at $0.000987/lb-mile while a 9,000 lb one priced at $0.00042. Fitting both points
+to `GCC = miles × (1.894 + 0.000211 × weight)` reproduces each within a dollar, and that is
+what the simulator uses.
+
+Treat it as ±25%, and enter the real number in **Actual GCC from TMO** as soon as you have
+it — the UI labels the line "(estimate)" until you do. The fit rests on two CONUS long-haul
+data points, so it will be least trustworthy for short moves or unusual lanes.
+
+## Rentals photos and links
+
+RentCast returns no photos and no listing URLs — verified against all 84 cached listings. It
+does return exact coordinates, so each listing gets a Google Street View image of the address
+and a labelled address search. **Neither is a listing photo or a listing link**, and the page
+says so directly rather than implying otherwise.
 
 ## Notifications are built but dormant
 

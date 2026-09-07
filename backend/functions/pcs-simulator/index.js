@@ -2,71 +2,119 @@ const { randomUUID } = require('crypto');
 const { queryByPK, get, put, del } = require('../../shared/db');
 const { getHouseholdContext } = require('../../shared/auth');
 const { ok, badRequest, notFound, noContent, parseBody } = require('../../shared/http');
-const { calculateMIE } = require('../../shared/mie');
+const { getGasPrices, priceForTier } = require('../../shared/gasPrices');
+const {
+  MALT_RATE_PER_MILE,
+  PER_DIEM_MEMBER_DAILY,
+  PPM_TAX_WITHHOLDING,
+  estimateGcc,
+  dlaFor,
+  weightAllowanceFor,
+  dependentPerDiem,
+} = require('../../shared/pcsRates');
 
 const PCS_SIMULATIONS_TABLE = process.env.PCS_SIMULATIONS_TABLE;
 
 const TRUCK_MPG = { '10ft': 12, '15ft': 10, '20ft': 10, '26ft': 8 };
-const GAS_TIERS = { low: 3.0, mid: 3.5, high: 4.0 };
-const DEFAULT_PPM_RATE_PER_LB_PER_MILE = 0.00037;
+const DAILY_FOOD_BUDGET = 120;
 
-function calculateResults(input) {
+const round = (n) => Math.round(n * 100) / 100;
+
+async function calculateResults(input) {
   const {
+    grade = 'O1',
+    hasDependents = true,
+    // Spouse (25) and infant daughter. Ages drive the 75%/50% per-diem split.
+    dependentAges = [25, 0],
+
     truckType = '26ft',
-    truckDailyRate = 0,
-    truckMileageRate = 0,
-    towCost = 0,
-    routeMiles = 2800,
-    tripDays = 1,
-    travelers = 1,
-    hotelStops = [],
-    materialWeightLbs = 0,
+    // One quoted figure for the whole rental rather than separate daily and
+    // per-mile rates — that's how the rental companies actually quote it.
+    quotedTruckRental = 0,
     materialCost = 0,
+    hotelStops = [],
+
+    routeMiles = 2800,
+    tripDays = 4,
+    // The member and dependents can be paid different numbers of travel days
+    // (they were on the last move: 8 vs 7), so they're tracked separately.
+    memberTravelDays,
+    dependentTravelDays,
+    povCount = 1,
+
     estimatedHHGWeight = 0,
+    // The real Government Constructed Cost from TMO/MilMove, once known.
+    // Always preferred over the estimate when present.
+    actualGcc,
+
     gasPriceTier = 'mid',
     gasPricePerGallon,
     truckMPG = TRUCK_MPG[truckType] ?? 10,
     povMPG = 18,
-    dlaAmount = 2366,
-    govPPMRatePerLbPerMile = DEFAULT_PPM_RATE_PER_LB_PER_MILE,
+    dailyFoodBudget = DAILY_FOOD_BUDGET,
   } = input;
 
-  const gasPrice = gasPricePerGallon ?? GAS_TIERS[gasPriceTier] ?? GAS_TIERS.mid;
+  const memberDays = memberTravelDays ?? tripDays;
+  const dependentDays = dependentTravelDays ?? tripDays;
 
-  const totalWeight = estimatedHHGWeight + materialWeightLbs;
-  const truckRentalCost = truckDailyRate * tripDays + truckMileageRate * routeMiles;
+  // Live weekly EIA prices unless a specific price is supplied.
+  const gasPrices = await getGasPrices();
+  const gasPrice = gasPricePerGallon ?? priceForTier(gasPrices, gasPriceTier);
+
+  // --- Costs you actually pay ---
   const fuelCostTruck = (routeMiles / truckMPG) * gasPrice;
   const fuelCostPov = (routeMiles / povMPG) * gasPrice;
   const hotelCost = hotelStops.reduce((sum, s) => sum + (s.nights ?? 0) * (s.costPerNight ?? 0), 0);
-  const foodCost = calculateMIE(tripDays, travelers);
+  const foodCost = dailyFoodBudget * tripDays;
+  const totalExpenses = quotedTruckRental + fuelCostTruck + fuelCostPov + hotelCost + foodCost + materialCost;
 
-  const totalExpenses =
-    truckRentalCost + towCost + fuelCostTruck + fuelCostPov + hotelCost + foodCost + materialCost;
+  // --- PPM incentive ---
+  // Paid on the lesser of what you actually move and your authorized allowance.
+  const weightAllowance = weightAllowanceFor(grade, hasDependents);
+  const billableWeight = Math.min(estimatedHHGWeight, weightAllowance);
+  const gcc = actualGcc != null ? Number(actualGcc) : estimateGcc(billableWeight, routeMiles);
+  const taxableProfit = gcc - totalExpenses;
+  // Withholding only applies to profit — a loss isn't taxed.
+  const taxWithheld = taxableProfit > 0 ? taxableProfit * PPM_TAX_WITHHOLDING : 0;
+  const netPPMProfit = gcc - taxWithheld - totalExpenses;
 
-  const govConstructiveCost = totalWeight * govPPMRatePerLbPerMile * routeMiles;
-  const grossPPMProfit = govConstructiveCost - totalExpenses;
-  const taxReserve22Pct = grossPPMProfit * 0.22;
-  const netPPMProfit = grossPPMProfit * 0.78;
-
-  const round = (n) => Math.round(n * 100) / 100;
+  // --- Entitlements paid on top, regardless of the PPM ---
+  const dla = dlaFor(grade, hasDependents);
+  const malt = MALT_RATE_PER_MILE * routeMiles * povCount;
+  const memberPerDiem = PER_DIEM_MEMBER_DAILY * memberDays;
+  const depPerDiem = hasDependents ? dependentPerDiem(dependentAges, dependentDays) : 0;
+  const totalEntitlements = dla + malt + memberPerDiem + depPerDiem;
 
   return {
-    totalWeight,
-    truckRentalCost: round(truckRentalCost),
-    towCost: round(towCost),
+    weightAllowance,
+    billableWeight,
+    weightOverAllowance: Math.max(0, estimatedHHGWeight - weightAllowance),
+
+    quotedTruckRental: round(quotedTruckRental),
     fuelCost_truck: round(fuelCostTruck),
     fuelCost_pov: round(fuelCostPov),
     hotelCost: round(hotelCost),
     foodCost: round(foodCost),
     materialCost: round(materialCost),
     totalExpenses: round(totalExpenses),
-    govConstructiveCost: round(govConstructiveCost),
-    grossPPMProfit: round(grossPPMProfit),
-    taxReserve22Pct: round(taxReserve22Pct),
+
+    govConstructiveCost: round(gcc),
+    gccIsEstimate: actualGcc == null,
+    taxableProfit: round(taxableProfit),
+    taxWithheld: round(taxWithheld),
     netPPMProfit: round(netPPMProfit),
-    dlaAmount,
-    totalNetToHousehold: round(netPPMProfit + dlaAmount),
-    gasPricePerGallon: gasPrice,
+
+    dla: round(dla),
+    malt: round(malt),
+    memberPerDiem: round(memberPerDiem),
+    dependentPerDiem: round(depPerDiem),
+    totalEntitlements: round(totalEntitlements),
+
+    totalNetToHousehold: round(netPPMProfit + totalEntitlements),
+
+    gasPricePerGallon: round(gasPrice),
+    gasPriceSource: gasPrices.source,
+    gasPriceAsOf: gasPrices.asOf,
   };
 }
 
@@ -99,7 +147,7 @@ exports.handler = async (event) => {
   const body = parseBody(event);
   if (!body) return badRequest('Invalid JSON body');
 
-  const results = calculateResults(body);
+  const results = await calculateResults(body);
 
   // A run without a label is a live calculation — only save named runs.
   if (!body.label) return ok({ results });
@@ -111,3 +159,5 @@ exports.handler = async (event) => {
   const { PK, SK, ...rest } = simulation;
   return ok({ simulation: { simulationId: SK, ...rest } });
 };
+
+module.exports.calculateResults = calculateResults;

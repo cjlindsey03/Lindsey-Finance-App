@@ -23,6 +23,15 @@ export function currentPeriod() {
   return getPeriod(new Date().toISOString().slice(0, 10));
 }
 
+// Planning targets the period after this one — the point is to have a plan
+// ready before the check arrives.
+export function nextPeriod(dateIso = new Date().toISOString().slice(0, 10)) {
+  const period = getPeriod(dateIso);
+  const end = new Date(`${period.periodEnd}T00:00:00`);
+  end.setDate(end.getDate() + 1);
+  return getPeriod(end.toISOString().slice(0, 10));
+}
+
 export function billFallsInPeriod(dayOfMonth, period) {
   if (!dayOfMonth || !period) return false;
   return period.isFirstHalf ? dayOfMonth <= 14 : dayOfMonth >= 15;

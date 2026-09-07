@@ -11,7 +11,7 @@ import {
 } from '../api/hooks.js';
 import { CATEGORIES } from '../constants/categories.js';
 import { money, percent, shortDate } from '../utils/format.js';
-import { currentPeriod, suggestAllocationsFromBills, suggestIncomeFromBills } from '../utils/billPeriod.js';
+import { nextPeriod, suggestAllocationsFromBills, suggestIncomeFromBills } from '../utils/billPeriod.js';
 
 const EMPTY_DRAFT = { label: '', income: '', allocations: {}, g1Extra: '', g2Allocation: '' };
 
@@ -62,7 +62,7 @@ export default function SpendingPlans() {
   const [savingsAmount, setSavingsAmount] = useState('');
   const [commitResult, setCommitResult] = useState(null);
 
-  const period = data?.currentPeriod ?? currentPeriod();
+  const period = data?.planningPeriod ?? nextPeriod();
   const drafts = data?.drafts ?? [];
   const committed = data?.committed ?? [];
   const committedThisPeriod = committed.find((p) => p.periodKey === period.periodKey);
@@ -155,14 +155,14 @@ export default function SpendingPlans() {
       <PageHeader title="Spending Plans" />
 
       <BlueprintCard style={{ gap: 'var(--space-2)' }}>
-        <div className="card-kicker">Current pay period</div>
+        <div className="card-kicker">Planning for next pay period</div>
         <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 22 }}>
           {shortDate(period.periodStart)} – {shortDate(period.periodEnd)}
         </div>
         <div className="text-muted" style={{ fontSize: 12 }}>
           {committedThisPeriod
             ? `Committed: ${committedThisPeriod.label} (${committedThisPeriod.score})`
-            : `${drafts.length} draft${drafts.length === 1 ? '' : 's'} — none committed yet. Drafts clear when the period rolls over.`}
+            : `${drafts.length} draft${drafts.length === 1 ? '' : 's'} — none committed yet. Build one before the check lands; drafts clear once the period passes.`}
         </div>
       </BlueprintCard>
 
