@@ -79,12 +79,16 @@ async function renderPlanPdf(plan, accountNames = {}) {
   line('Spending Plan', { size: 20, face: bold, gap: 20 });
   line(plan.label ?? 'Untitled plan', { size: 13, face: bold, gap: 16 });
   line(`Pay period ${prettyDate(plan.periodStart)} - ${prettyDate(plan.periodEnd)}`, { size: 11, color: MUTED });
-  line(
-    plan.status === 'committed'
-      ? `Committed ${plan.committedAt ? new Date(plan.committedAt).toLocaleString('en-US') : ''}`
-      : 'Draft — not yet committed',
-    { size: 11, color: MUTED, gap: 10 }
-  );
+  const statusLine = () => {
+    if (plan.status === 'applied') {
+      return `Applied ${plan.appliedAt ? new Date(plan.appliedAt).toLocaleString('en-US') : ''}`;
+    }
+    if (plan.status === 'committed') {
+      return `Committed — applies ${prettyDate(plan.periodStart)}`;
+    }
+    return 'Draft — not yet committed';
+  };
+  line(statusLine(), { size: 11, color: MUTED, gap: 10 });
 
   const b = plan.scoreBreakdown ?? {};
   heading('Score');
@@ -117,8 +121,9 @@ async function renderPlanPdf(plan, accountNames = {}) {
   row('Expected income', money(income), { size: 11 });
   row('Unallocated', money(income - allocated), { size: 11 });
 
-  if (plan.status === 'committed') {
-    heading('Applied to Accounts');
+  if (plan.status === 'committed' || plan.status === 'applied') {
+    // Before the pay period starts these are scheduled, not spent.
+    heading(plan.status === 'applied' ? 'Applied to Accounts' : 'Scheduled Payments');
     const payments = Object.entries(plan.accountPayments ?? {});
     if (!payments.length && !plan.savingsAmount) {
       line('No account payments were recorded.', { size: 10, color: MUTED });

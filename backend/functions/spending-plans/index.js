@@ -28,12 +28,21 @@ const GRADE_THRESHOLDS = [
 
 const toPublicPlan = ({ PK, SK, ...rest }) => ({ planId: SK, ...rest });
 
+// A plan's life: draft -> committed (scheduled, no money moved yet) ->
+// applied (the pay period started and the balances actually moved).
+// Both of the latter mean "this is the plan for that period".
+const isCommitted = (plan) => plan?.status === 'committed' || plan?.status === 'applied';
+
 function scorePlan({ income, allocations = {}, g1Extra = 0, g2Allocation = 0 }) {
   if (!income) {
     return { score: 'F', scoreBreakdown: { debtContributionPct: 0, savingsContributionPct: 0, combinedPct: 0 } };
   }
 
-  const debtContributionPct = (((allocations.Debt_Payment ?? 0) + g1Extra) / income) * 100;
+  // Car notes are debt — they just get their own line on the form. Counting
+  // them here keeps the grade honest when a payment is re-filed out of
+  // Debt_Payment into Car_Payment.
+  const debtPaid = (allocations.Debt_Payment ?? 0) + (allocations.Car_Payment ?? 0) + g1Extra;
+  const debtContributionPct = (debtPaid / income) * 100;
   const savingsContributionPct = (g2Allocation / income) * 100;
   const combinedPct = debtContributionPct + savingsContributionPct;
   const score = GRADE_THRESHOLDS.find((t) => combinedPct >= t.min)?.grade ?? 'F';
@@ -66,7 +75,7 @@ async function listPlans(householdId) {
     .filter((p) => p.status === 'draft' && p.periodKey === planning.periodKey)
     .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
   const committed = plans
-    .filter((p) => p.status === 'committed')
+    .filter(isCommitted)
     .sort((a, b) => (b.periodKey ?? '').localeCompare(a.periodKey ?? ''));
 
   return ok({
@@ -80,7 +89,7 @@ async function listPlans(householdId) {
 async function savePlan(householdId, planId, body) {
   const existing = planId ? await get(SPENDING_PLANS_TABLE, { PK: householdId, SK: planId }) : null;
   if (planId && !existing) return notFound('Plan not found');
-  if (existing?.status === 'committed') return badRequest('A committed plan cannot be edited');
+  if (isCommitted(existing)) return badRequest('A committed plan cannot be edited');
 
   const period = body.periodStart ? getPeriod(body.periodStart) : existing ? getPeriod(existing.periodStart) : nextPeriod();
   const { score, scoreBreakdown } = scorePlan(body);
@@ -109,72 +118,32 @@ async function savePlan(householdId, planId, body) {
   return ok({ plan: toPublicPlan(plan) });
 }
 
-// Committing is what actually moves money in the app: the payments entered on
-// the commit form are applied to real account balances, which is what then
-// updates G1, G3 and the dashboard.
+// Committing schedules a plan; it does not move money. You plan for the pay
+// period that hasn't started yet, so applying the payments now would spend a
+// paycheck that hasn't landed. The daily job in shared/applyPlans.js moves the
+// balances once periodStart arrives.
 async function commitPlan(householdId, planId, body) {
   const plan = await get(SPENDING_PLANS_TABLE, { PK: householdId, SK: planId });
   if (!plan) return notFound('Plan not found');
-  if (plan.status === 'committed') return badRequest('This plan is already committed');
+  if (isCommitted(plan)) return badRequest('This plan is already committed');
 
   const siblings = await queryByPK(SPENDING_PLANS_TABLE, householdId);
-  const alreadyCommitted = siblings.find(
-    (p) => p.status === 'committed' && p.periodKey === plan.periodKey
-  );
+  const alreadyCommitted = siblings.find((p) => isCommitted(p) && p.periodKey === plan.periodKey);
   if (alreadyCommitted) {
     return badRequest(`A plan is already committed for ${plan.periodKey} — balances would be applied twice`);
-  }
-
-  const accountPayments = body?.accountPayments ?? {};
-  const savingsAmount = Number(body?.savingsAmount) || 0;
-  const changes = [];
-
-  for (const [accountId, rawAmount] of Object.entries(accountPayments)) {
-    const amount = Number(rawAmount) || 0;
-    if (amount <= 0) continue;
-
-    const account = await get(ACCOUNTS_TABLE, { PK: householdId, SK: accountId });
-    if (!account) continue;
-
-    const before = account.currentBalance ?? 0;
-    const updated = { ...account, currentBalance: Math.round((before - amount) * 100) / 100 };
-    await put(ACCOUNTS_TABLE, updated);
-    await writeBalanceSnapshot(householdId, updated, 'plan');
-    changes.push({ accountId, name: account.name, payment: amount, before, after: updated.currentBalance });
-  }
-
-  if (savingsAmount > 0) {
-    const g2 = await get(G2_TABLE, { PK: householdId });
-    const savingsAccountId = g2?.savingsAccountId;
-    const savings = savingsAccountId
-      ? await get(ACCOUNTS_TABLE, { PK: householdId, SK: savingsAccountId })
-      : null;
-
-    if (savings) {
-      const before = savings.currentBalance ?? 0;
-      const updated = { ...savings, currentBalance: Math.round((before + savingsAmount) * 100) / 100 };
-      await put(ACCOUNTS_TABLE, updated);
-      await writeBalanceSnapshot(householdId, updated, 'plan');
-      changes.push({
-        accountId: savingsAccountId,
-        name: savings.name,
-        payment: -savingsAmount,
-        before,
-        after: updated.currentBalance,
-      });
-    }
   }
 
   const committed = {
     ...plan,
     status: 'committed',
-    accountPayments,
-    savingsAmount,
+    accountPayments: body?.accountPayments ?? {},
+    savingsAmount: Number(body?.savingsAmount) || 0,
     committedAt: new Date().toISOString(),
   };
   await put(SPENDING_PLANS_TABLE, committed);
 
-  return ok({ plan: toPublicPlan(committed), changes });
+  // No balance changes yet — the UI reports when they'll happen instead.
+  return ok({ plan: toPublicPlan(committed), changes: [], appliesOn: plan.periodStart });
 }
 
 // Reverses everything commitPlan did: adds the account payments back, takes
@@ -184,7 +153,16 @@ async function commitPlan(householdId, planId, body) {
 async function uncommitPlan(householdId, planId) {
   const plan = await get(SPENDING_PLANS_TABLE, { PK: householdId, SK: planId });
   if (!plan) return notFound('Plan not found');
-  if (plan.status !== 'committed') return badRequest('Only a committed plan can be uncommitted');
+  if (!isCommitted(plan)) return badRequest('Only a committed plan can be uncommitted');
+
+  // A plan that hasn't reached its pay period yet never moved any money, so
+  // there is nothing to reverse — just hand it back as a draft.
+  if (plan.status === 'committed') {
+    const { accountPayments, savingsAmount, committedAt, ...rest } = plan;
+    const reverted = { ...rest, status: 'draft' };
+    await put(SPENDING_PLANS_TABLE, reverted);
+    return ok({ plan: toPublicPlan(reverted), changes: [], wasApplied: false });
+  }
 
   const changes = [];
 
@@ -225,11 +203,11 @@ async function uncommitPlan(householdId, planId) {
     }
   }
 
-  const { accountPayments, savingsAmount: _savingsAmount, committedAt, ...rest } = plan;
+  const { accountPayments, savingsAmount: _savingsAmount, committedAt, appliedAt, ...rest } = plan;
   const reverted = { ...rest, status: 'draft' };
   await put(SPENDING_PLANS_TABLE, reverted);
 
-  return ok({ plan: toPublicPlan(reverted), changes });
+  return ok({ plan: toPublicPlan(reverted), changes, wasApplied: true });
 }
 
 async function planPdf(householdId, planId) {
@@ -274,7 +252,7 @@ exports.handler = async (event) => {
     if (!planId) return badRequest('planId is required');
     const existing = await get(SPENDING_PLANS_TABLE, { PK: householdId, SK: planId });
     if (!existing) return notFound('Plan not found');
-    if (existing.status === 'committed') return badRequest('Committed plans are kept as history');
+    if (isCommitted(existing)) return badRequest('Committed plans are kept as history');
     await del(SPENDING_PLANS_TABLE, { PK: householdId, SK: planId });
     return noContent();
   }

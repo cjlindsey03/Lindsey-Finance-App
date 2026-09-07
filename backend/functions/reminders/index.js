@@ -3,6 +3,7 @@ const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { queryByPK, put, del } = require('../../shared/db');
 const { currentPeriod, getPeriod } = require('../../shared/payPeriod');
 const { buildPeriodReport } = require('../../shared/periodReport');
+const { applyDuePlans } = require('../../shared/applyPlans');
 
 const CASHFLOW_EVENTS_TABLE = process.env.CASHFLOW_EVENTS_TABLE;
 const RECURRING_BILLS_TABLE = process.env.RECURRING_BILLS_TABLE;
@@ -117,6 +118,17 @@ exports.handler = async (event = {}) => {
     }
   }
 
+  // A committed plan's payments land when its pay period actually starts, not
+  // when it was committed — that's what keeps the goals honest between the
+  // moment you plan and the moment the check arrives.
+  let appliedPlans = [];
+  try {
+    appliedPlans = await applyDuePlans(HOUSEHOLD_ID);
+  } catch (err) {
+    // Must not cost us the draft purge below.
+    console.error('Applying due plans failed:', err.message);
+  }
+
   // Drafts are scratch work for a single pay period — once the period rolls
   // over they're clutter. Committed plans are history and always kept.
   const { periodKey } = currentPeriod();
@@ -126,5 +138,11 @@ exports.handler = async (event = {}) => {
     await del(SPENDING_PLANS_TABLE, { PK: draft.PK, SK: draft.SK });
   }
 
-  return { sentCount: sent.length, sent, purgedDrafts: staleDrafts.length, reportGenerated };
+  return {
+    sentCount: sent.length,
+    sent,
+    purgedDrafts: staleDrafts.length,
+    reportGenerated,
+    appliedPlans: appliedPlans.map((p) => ({ label: p.label, periodStart: p.periodStart, changes: p.changes.length })),
+  };
 };

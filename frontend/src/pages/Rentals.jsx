@@ -85,7 +85,7 @@ function ListingCard({ listing }) {
 
 export default function Rentals() {
   const [filters, setFilters] = useState({ bedrooms: '4', maxRent: '2300' });
-  const { data, refetch, isFetching } = useRentals(filters);
+  const { data, refetch, isFetching, isError, error } = useRentals(filters);
 
   const update = (key) => (e) => setFilters({ ...filters, [key]: e.target.value });
   const listings = data?.listings ?? [];
@@ -117,6 +117,13 @@ export default function Rentals() {
           direct listing links, so "Search this address" opens a web search for that property instead.
         </p>
 
+        {/* A failed search must never be mistaken for "no houses matched". */}
+        {isError && (
+          <div style={{ fontSize: 12, color: 'var(--color-overspend)' }}>
+            Search failed: {error?.message}
+          </div>
+        )}
+
         {data?.cachedAt && (
           <div className="text-muted" style={{ fontSize: 11 }}>
             {listings.length} match{listings.length === 1 ? '' : 'es'} · refreshed{' '}
@@ -137,8 +144,12 @@ export default function Rentals() {
         </div>
       )}
 
-      {data && !listings.length && (
+      {data && !listings.length && !isError && (
         <BlueprintCard><p className="card-body">No listings matched. Try widening the filters.</p></BlueprintCard>
+      )}
+
+      {!data && !isError && !isFetching && (
+        <BlueprintCard><p className="card-body">Press Search to pull current listings.</p></BlueprintCard>
       )}
     </>
   );

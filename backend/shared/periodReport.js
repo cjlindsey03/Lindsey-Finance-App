@@ -55,7 +55,10 @@ async function gatherPeriodData(householdId, period) {
   const totalIncome = lines.filter((l) => l.amount > 0).reduce((s, l) => s + l.amount, 0);
   const totalBills = lines.filter((l) => l.amount < 0).reduce((s, l) => s + l.amount, 0);
 
-  const committedPlan = plans.find((p) => p.status === 'committed' && p.periodKey === period.periodKey) ?? null;
+  const committedPlan =
+    plans.find(
+      (p) => (p.status === 'committed' || p.status === 'applied') && p.periodKey === period.periodKey
+    ) ?? null;
 
   const g1Accounts = accounts.filter((a) => a.isG1Target);
   const revolving = accounts.filter((a) => a.creditLimit > 0);

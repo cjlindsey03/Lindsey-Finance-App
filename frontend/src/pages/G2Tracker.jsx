@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import BlueprintCard from '../components/BlueprintCard.jsx';
 import PageHeader from '../components/PageHeader.jsx';
+import ProgressBar from '../components/ProgressBar.jsx';
 import { useG2, useUpdateG2, useAccounts } from '../api/hooks.js';
 import { money } from '../utils/format.js';
 
@@ -25,6 +26,9 @@ export default function G2Tracker() {
   const isPlanDriven = data?.monthlyContributionSource === 'plan';
 
   const progress = data?.targetAmount ? Math.min(100, (data.currentAmount / data.targetAmount) * 100) : 0;
+  const projectedProgress = data?.targetAmount
+    ? ((data.projectedDeposits ?? 0) / data.targetAmount) * 100
+    : 0;
   const savingsAccounts = (accountsData?.accounts ?? []).filter(
     (a) => a.subtype === 'savings' || a.type === 'savings'
   );
@@ -38,9 +42,12 @@ export default function G2Tracker() {
         <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 32 }}>
           {money(data?.currentAmount)} <span className="text-muted" style={{ fontSize: 18 }}>/ {money(data?.targetAmount)}</span>
         </div>
-        <div style={{ height: 10, background: 'var(--color-surface-2)' }}>
-          <div style={{ height: '100%', width: `${progress}%`, background: 'var(--color-accent)', transition: 'width 1s cubic-bezier(.2,.8,.2,1)' }} />
-        </div>
+        <ProgressBar value={progress} projected={projectedProgress} />
+        {data?.projectedDeposits > 0 && (
+          <div className="text-muted" style={{ fontSize: 11 }}>
+            {money(data.projectedDeposits)} scheduled from your committed plan, applying when the pay period starts.
+          </div>
+        )}
         <div className="text-muted" style={{ fontSize: 12 }}>
           {data?.projectedReachDate
             ? `Projected to hit target ${data.projectedReachDate}${

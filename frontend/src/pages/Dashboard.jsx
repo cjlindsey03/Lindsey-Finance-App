@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import BlueprintCard from '../components/BlueprintCard.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import Icon from '../components/Icon.jsx';
+import ProgressBar from '../components/ProgressBar.jsx';
 import { useG1, useG2, useG3, useCashflow } from '../api/hooks.js';
 import { money, percent, shortDate } from '../utils/format.js';
+import { daysUntil, urgency } from '../utils/dates.js';
 
 const today = new Date();
 
@@ -84,6 +86,48 @@ export default function Dashboard() {
     },
   ];
 
+  const pcsCountdown = urgency(daysUntil(g2.data?.pcsDate));
+
+  // Actual progress is what has really happened; the projected segment is a
+  // committed plan whose pay period hasn't arrived yet. Keeping them apart is
+  // the point — progress shouldn't move until the money does.
+  const goalBars = [];
+
+  if (g1.data?.baselineTotal > 0) {
+    const { baselineTotal, paidDown, progressPct, projectedPayments } = g1.data;
+    goalBars.push({
+      label: 'G1 · Debt paid down',
+      detail: `${money(paidDown)} of ${money(baselineTotal)} · ${progressPct}%`,
+      pct: progressPct,
+      projectedPct: (projectedPayments / baselineTotal) * 100,
+      projectedNote: projectedPayments > 0 ? `${money(projectedPayments)} scheduled from your committed plan` : null,
+    });
+  }
+
+  if (g2.data?.targetAmount > 0) {
+    const { currentAmount, targetAmount, projectedDeposits } = g2.data;
+    goalBars.push({
+      label: 'G2 · PCS fund',
+      detail: `${money(currentAmount)} of ${money(targetAmount)} · ${Math.round((currentAmount / targetAmount) * 100)}%`,
+      pct: (currentAmount / targetAmount) * 100,
+      projectedPct: ((projectedDeposits ?? 0) / targetAmount) * 100,
+      projectedNote: projectedDeposits > 0 ? `${money(projectedDeposits)} scheduled from your committed plan` : null,
+    });
+  }
+
+  if (g3.data?.utilization?.aggregateUtil != null) {
+    // Utilization is a ceiling, not a total — progress is how far below 30%
+    // you've got, so 30%+ reads as 0% and 0% utilization reads as complete.
+    const util = g3.data.utilization.aggregateUtil;
+    goalBars.push({
+      label: 'G3 · Utilization under 30%',
+      detail: `${percent(util, 1)} now · target 30%`,
+      pct: Math.max(0, Math.min(100, ((30 - util) / 30) * 100)),
+      projectedPct: 0,
+      projectedNote: util > 30 ? `${money(g3.data.utilizationTargets.to30Pct)} to get under 30%` : null,
+    });
+  }
+
   const g3Users = Object.entries(g3.data?.latest ?? {}).map(([userId, record]) => ({
     name: userId === 'cj' ? 'CJ' : userId === 'victoria' ? 'Victoria' : userId,
     fico: record.bestScore,
@@ -107,6 +151,30 @@ export default function Dashboard() {
             </BlueprintCard>
           ))}
         </div>
+
+        <BlueprintCard style={{ gap: 'var(--space-4)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+            <div className="card-title">Goal Progress</div>
+            {pcsCountdown.label && (
+              <div style={{ fontSize: 11, color: pcsCountdown.tone === 'danger' ? 'var(--color-overspend)' : undefined }}>
+                PCS {shortDate(g2.data?.pcsDate)} · {pcsCountdown.label}
+              </div>
+            )}
+          </div>
+
+          {goalBars.map((goal) => (
+            <div key={goal.label} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+                <div style={{ fontSize: 13 }}>{goal.label}</div>
+                <div className="text-muted" style={{ fontSize: 11 }}>{goal.detail}</div>
+              </div>
+              <ProgressBar value={mounted ? goal.pct : 0} projected={mounted ? goal.projectedPct : 0} />
+              {goal.projectedNote && (
+                <div className="text-muted" style={{ fontSize: 10 }}>{goal.projectedNote}</div>
+              )}
+            </div>
+          ))}
+        </BlueprintCard>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--space-4)', alignItems: 'start' }}>
           <BlueprintCard style={{ gap: 'var(--space-4)' }}>

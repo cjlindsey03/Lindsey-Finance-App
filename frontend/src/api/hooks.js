@@ -1,10 +1,28 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from './client.js';
+import { apiFetch, SessionExpiredError } from './client.js';
 import { useAuth } from '../context/AuthContext.jsx';
 
 function useApi() {
-  const { user } = useAuth();
-  return (path, options) => apiFetch(path, { ...options, idToken: user?.idToken });
+  const { getIdToken, endSession } = useAuth();
+  // The token is fetched per request rather than held in state, so Amplify can
+  // refresh it silently when it's close to expiring.
+  return async (path, options) => {
+    let idToken = null;
+    try {
+      idToken = await getIdToken();
+    } catch {
+      // Refresh failed outright — the session is genuinely over.
+      endSession();
+      throw new SessionExpiredError();
+    }
+
+    try {
+      return await apiFetch(path, { ...options, idToken });
+    } catch (err) {
+      if (err instanceof SessionExpiredError) endSession();
+      throw err;
+    }
+  };
 }
 
 export function useAccounts() {
@@ -213,6 +231,15 @@ export function useSaveTask() {
   return useMutation({
     mutationFn: ({ taskId, ...task }) =>
       taskId ? api(`/tasks/${taskId}`, { method: 'PUT', body: task }) : api('/tasks', { method: 'POST', body: task }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tasks'] }),
+  });
+}
+
+export function useDeleteTask() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (taskId) => api(`/tasks/${taskId}`, { method: 'DELETE' }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tasks'] }),
   });
 }

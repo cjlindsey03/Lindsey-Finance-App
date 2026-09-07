@@ -6,7 +6,7 @@ const AuthContext = createContext(null);
 // `sam local` skips JWT verification and assumes the one household, so local
 // dev signs in automatically rather than requiring a Cognito pool to exist.
 const LOCAL_AUTH = import.meta.env.VITE_AUTH_MODE === 'local';
-const LOCAL_USER = { username: 'cj', idToken: null };
+const LOCAL_USER = { username: 'cj' };
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -20,8 +20,10 @@ export function AuthProvider({ children }) {
     }
     try {
       const current = await getCurrentUser();
-      const session = await fetchAuthSession();
-      setUser({ username: current.username, idToken: session.tokens?.idToken?.toString() });
+      // Just proving a session exists — the token itself is fetched per
+      // request, never cached here.
+      await fetchAuthSession();
+      setUser({ username: current.username });
     } catch {
       setUser(null);
     } finally {
@@ -32,6 +34,17 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     loadSession();
   }, [loadSession]);
+
+  // Cognito ID tokens last an hour. Holding one in state meant that after an
+  // hour every request carried an expired JWT, API Gateway rejected it, and
+  // the Lambda never even ran — which looked like empty pages and dead
+  // buttons rather than an expired login. Asking Amplify for the token on
+  // each request lets it refresh silently off the 30-day refresh token.
+  const getIdToken = useCallback(async () => {
+    if (LOCAL_AUTH) return null;
+    const session = await fetchAuthSession();
+    return session.tokens?.idToken?.toString() ?? null;
+  }, []);
 
   const login = async (username, password) => {
     if (LOCAL_AUTH) return loadSession();
@@ -44,8 +57,14 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
+  // When a refresh finally fails (refresh token expired or revoked), drop the
+  // user so the app shows the login screen instead of silently failing.
+  const endSession = useCallback(() => setUser(null), []);
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{ user, loading, login, logout, getIdToken, endSession }}>
+      {children}
+    </AuthContext.Provider>
   );
 }
 

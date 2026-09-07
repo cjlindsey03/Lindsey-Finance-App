@@ -1,7 +1,7 @@
 const { get, put, queryByPK } = require('../../shared/db');
 const { getHouseholdContext } = require('../../shared/auth');
 const { ok, badRequest, parseBody } = require('../../shared/http');
-const { getActivePlan } = require('../../shared/activePlan');
+const { getActivePlan, getPendingPlans } = require('../../shared/activePlan');
 
 const G2_TABLE = process.env.G2_TABLE;
 const ACCOUNTS_TABLE = process.env.ACCOUNTS_TABLE;
@@ -51,6 +51,13 @@ async function getG2(householdId) {
   const monthlyContributionSource = activePlan != null ? 'plan' : 'manual';
 
   const currentAmount = await currentSavingsBalance(householdId, record.savingsAccountId);
+
+  // Savings from a committed plan that hasn't reached its pay period yet.
+  // currentAmount stays the real balance — this is shown alongside it as
+  // projected, so the fund never appears to lose ground between periods.
+  const pending = await getPendingPlans(householdId);
+  const projectedDeposits = pending.reduce((sum, p) => sum + (Number(p.savingsAmount) || 0), 0);
+
   const { PK, ...rest } = record;
 
   return ok({
@@ -59,6 +66,8 @@ async function getG2(householdId) {
     monthlyContributionSource,
     activePlanPayDate: activePlan?.payDate ?? null,
     currentAmount,
+    projectedDeposits: Math.round(projectedDeposits * 100) / 100,
+    projectedAmount: Math.round((currentAmount + projectedDeposits) * 100) / 100,
     ...project({ ...record, monthlyContribution, currentAmount }),
   });
 }

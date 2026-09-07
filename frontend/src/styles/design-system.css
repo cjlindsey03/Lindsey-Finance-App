@@ -150,6 +150,8 @@ textarea.input { min-height: 90px; resize: vertical; }
 .tag-accent { background: var(--color-accent-100); color: var(--color-accent-800); }
 .tag-neutral { background: var(--color-neutral-100); color: var(--color-neutral-800); }
 .tag-outline { border: 1px solid var(--color-accent); color: var(--color-accent); }
+/* Urgency — anything inside two weeks. */
+.tag-danger { border: 1px solid var(--color-overspend); color: var(--color-overspend); }
 
 /* — tables — */
 .table { width: 100%; border-collapse: collapse; font-size: 14px; }

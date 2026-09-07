@@ -2,9 +2,16 @@ const { queryByPK, get, put } = require('../../shared/db');
 const { getHouseholdContext } = require('../../shared/auth');
 const { ok, badRequest, parseBody } = require('../../shared/http');
 const { projectPayoff } = require('../../shared/snowball');
-const { getActivePlan } = require('../../shared/activePlan');
+const { getActivePlan, getPendingPlans } = require('../../shared/activePlan');
 
 const ACCOUNTS_TABLE = process.env.ACCOUNTS_TABLE;
+
+// Where the payoff started. The household's own framing: the starting point is
+// every credit card maxed out, so a card's baseline is its limit. Accounts with
+// no limit (the BNPL) carry an explicit g1Baseline instead, set when the
+// account was first tracked.
+const baselineFor = (account) =>
+  account.g1Baseline ?? (account.creditLimit > 0 ? account.creditLimit : account.currentBalance ?? 0);
 
 async function getG1(householdId, query) {
   const strategy = query.strategy === 'avalanche' ? 'avalanche' : 'snowball';
@@ -35,6 +42,7 @@ async function getG1(householdId, query) {
       accountId: a.SK,
       name: a.name,
       balance: a.currentBalance ?? 0,
+      baseline: baselineFor(a),
       creditLimit: a.creditLimit ?? null,
       utilization: a.creditLimit > 0 ? (a.currentBalance / a.creditLimit) * 100 : null,
       apr: a.apr ?? 0,
@@ -43,10 +51,30 @@ async function getG1(householdId, query) {
     }));
 
   const totalBalance = accounts.reduce((sum, a) => sum + a.balance, 0);
+  const baselineTotal = accounts.reduce((sum, a) => sum + a.baseline, 0);
+  const paidDown = Math.max(0, baselineTotal - totalBalance);
+
+  // Payments from a committed plan whose pay period hasn't started yet — real
+  // progress that's coming, shown separately so actual progress never moves
+  // until the money actually does.
+  const pending = await getPendingPlans(householdId);
+  const g1AccountIds = new Set(accounts.map((a) => a.accountId));
+  const projectedPayments = pending.reduce(
+    (sum, plan) =>
+      sum +
+      Object.entries(plan.accountPayments ?? {})
+        .filter(([accountId]) => g1AccountIds.has(accountId))
+        .reduce((s, [, amount]) => s + (Number(amount) || 0), 0),
+    0
+  );
 
   return ok({
     accounts,
     totalBalance,
+    baselineTotal: Math.round(baselineTotal * 100) / 100,
+    paidDown: Math.round(paidDown * 100) / 100,
+    progressPct: baselineTotal > 0 ? Math.round((paidDown / baselineTotal) * 1000) / 10 : 0,
+    projectedPayments: Math.round(projectedPayments * 100) / 100,
     monthlyExtra,
     monthlyExtraSource,
     activePlanPayDate,

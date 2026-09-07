@@ -48,7 +48,8 @@ exports.handler = async (event) => {
     if (!taskId) return badRequest('taskId is required');
     const existing = await get(TASKS_TABLE, { PK: householdId, SK: taskId });
     if (!existing) return notFound('Task not found');
-    if (!existing.isUserAdded) return badRequest('Only user-added tasks can be deleted');
+    // Seeded checklist items used to be undeletable, but it's their checklist —
+    // a task that doesn't apply to this move is just clutter.
 
     await del(TASKS_TABLE, { PK: householdId, SK: taskId });
     return noContent();

@@ -66,9 +66,23 @@ export default function SpendingPlans() {
   const [savingsAmount, setSavingsAmount] = useState('');
   const [commitResult, setCommitResult] = useState(null);
   const [uncommitTarget, setUncommitTarget] = useState(null);
+  const [pdfFallbackUrl, setPdfFallbackUrl] = useState(null);
+  const [scheduledFor, setScheduledFor] = useState(null);
 
+  // The tab has to be opened synchronously inside the click handler — a
+  // window.open() that waits for the request to come back first is treated as
+  // an unsolicited popup and blocked. If it's blocked anyway, fall back to
+  // showing a link to click.
   const viewPdf = (planId) => {
-    planPdf.mutate(planId, { onSuccess: (res) => window.open(res.url, '_blank', 'noopener') });
+    setPdfFallbackUrl(null);
+    const tab = window.open('', '_blank');
+    planPdf.mutate(planId, {
+      onSuccess: (res) => {
+        if (tab) tab.location = res.url;
+        else setPdfFallbackUrl(res.url);
+      },
+      onError: () => tab?.close(),
+    });
   };
 
   const period = data?.planningPeriod ?? nextPeriod();
@@ -139,12 +153,16 @@ export default function SpendingPlans() {
   };
 
   const paymentsTotal = Object.values(payments).reduce((sum, v) => sum + (Number(v) || 0), 0);
-  const plannedDebt = Number(committing?.allocations?.Debt_Payment ?? 0);
+  // Car notes are debt too, so they belong in the figure the payments are
+  // checked against.
+  const plannedDebt =
+    Number(committing?.allocations?.Debt_Payment ?? 0) + Number(committing?.allocations?.Car_Payment ?? 0);
 
   const submitUncommit = () => {
     uncommitPlan.mutate(uncommitTarget.planId, {
       onSuccess: (res) => {
-        setCommitResult(res.changes ?? []);
+        setScheduledFor(null);
+        setCommitResult(res.wasApplied ? res.changes ?? [] : []);
         setUncommitTarget(null);
       },
     });
@@ -161,7 +179,8 @@ export default function SpendingPlans() {
       },
       {
         onSuccess: (res) => {
-          setCommitResult(res.changes ?? []);
+          setCommitResult(null);
+          setScheduledFor(res.appliesOn ?? committing.periodStart);
           setCommitting(null);
         },
       }
@@ -180,7 +199,11 @@ export default function SpendingPlans() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
           <div className="text-muted" style={{ fontSize: 12 }}>
             {committedThisPeriod
-              ? `Committed: ${committedThisPeriod.label} (${committedThisPeriod.score})`
+              ? `${committedThisPeriod.label} (${committedThisPeriod.score}) — ${
+                  committedThisPeriod.status === 'applied'
+                    ? 'applied to your balances'
+                    : `committed, applies ${shortDate(committedThisPeriod.periodStart)}`
+                }`
               : `${drafts.length} draft${drafts.length === 1 ? '' : 's'} — none committed yet. Build one before the check lands; drafts clear once the period passes.`}
           </div>
           {committedThisPeriod && (
@@ -196,17 +219,37 @@ export default function SpendingPlans() {
         </div>
       </BlueprintCard>
 
+      {(planPdf.isError || pdfFallbackUrl) && (
+        <BlueprintCard>
+          {planPdf.isError ? (
+            <p className="card-body" style={{ color: 'var(--color-overspend)' }}>
+              Couldn't open the PDF: {planPdf.error?.message}
+            </p>
+          ) : (
+            <p className="card-body">
+              Your browser blocked the new tab.{' '}
+              <a href={pdfFallbackUrl} target="_blank" rel="noreferrer">Open the PDF</a>
+            </p>
+          )}
+        </BlueprintCard>
+      )}
+
       {uncommitTarget && (
         <BlueprintCard>
           <div className="card-title">Uncommit “{uncommitTarget.label}”?</div>
           <p className="card-body">
-            This reverses the balance changes this plan applied — payments go back onto their accounts, savings
-            comes back out — and turns it back into an editable draft. You can then commit a different plan for
-            this period instead.
+            {uncommitTarget.status === 'applied'
+              ? 'This plan already applied, so this reverses those balance changes — payments go back onto their accounts and savings comes back out — and turns it into an editable draft.'
+              : "This plan hasn't applied yet, so no balances change. It just goes back to being an editable draft."}{' '}
+            You can then commit a different plan for this period instead.
           </p>
           <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
             <button type="button" className="btn btn-primary" onClick={submitUncommit} disabled={uncommitPlan.isPending}>
-              {uncommitPlan.isPending ? 'Reversing…' : 'Uncommit and reverse balances'}
+              {uncommitPlan.isPending
+                ? 'Reversing…'
+                : uncommitTarget.status === 'applied'
+                  ? 'Uncommit and reverse balances'
+                  : 'Uncommit'}
             </button>
             <button type="button" className="btn btn-secondary" onClick={() => setUncommitTarget(null)}>Cancel</button>
           </div>
@@ -216,7 +259,18 @@ export default function SpendingPlans() {
         </BlueprintCard>
       )}
 
-      {commitResult && (
+      {scheduledFor && (
+        <BlueprintCard>
+          <div className="card-title">Plan committed</div>
+          <p className="card-body">
+            Nothing has moved yet. These payments apply to your balances on{' '}
+            <strong>{shortDate(scheduledFor)}</strong>, when the pay period starts. Until then your goals show
+            it as projected progress. You can still uncommit and swap in a different plan.
+          </p>
+        </BlueprintCard>
+      )}
+
+      {commitResult && commitResult.length > 0 && (
         <BlueprintCard>
           <div className="card-title">Balances updated</div>
           <div style={{ overflowX: 'auto' }}>
@@ -245,8 +299,9 @@ export default function SpendingPlans() {
         <BlueprintCard>
           <div className="card-title">Commit “{committing.label}”</div>
           <p className="card-body">
-            Enter what you're actually paying each account this period. Committing subtracts these from your balances,
-            which is what updates G1, G3 and the dashboard.
+            Enter what you're actually paying each account this period. These are scheduled, not spent — they hit
+            your balances on {shortDate(committing.periodStart)} when the pay period starts, and show as projected
+            progress on your goals until then.
           </p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-3)' }}>
             {debts.map((account) => (
@@ -285,7 +340,7 @@ export default function SpendingPlans() {
           </div>
           <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
             <button type="button" className="btn btn-primary" onClick={submitCommit} disabled={commitPlan.isPending}>
-              {commitPlan.isPending ? 'Committing…' : 'Commit and apply balances'}
+              {commitPlan.isPending ? 'Committing…' : 'Commit this plan'}
             </button>
             <button type="button" className="btn btn-secondary" onClick={() => setCommitting(null)}>Cancel</button>
           </div>
@@ -397,7 +452,7 @@ export default function SpendingPlans() {
           <div style={{ overflowX: 'auto' }}>
             <table className="table">
               <thead>
-                <tr><th>Period</th><th>Plan</th><th>Income</th><th>Score</th><th>Committed</th><th /></tr>
+                <tr><th>Period</th><th>Plan</th><th>Income</th><th>Score</th><th>Status</th><th /></tr>
               </thead>
               <tbody>
                 {committed.map((plan) => (
@@ -406,7 +461,11 @@ export default function SpendingPlans() {
                     <td>{plan.label}</td>
                     <td>{money(plan.income)}</td>
                     <td><span className="tag tag-outline">{plan.score}</span></td>
-                    <td className="text-muted">{plan.committedAt ? new Date(plan.committedAt).toLocaleDateString() : '—'}</td>
+                    <td className="text-muted">
+                      {plan.status === 'applied'
+                        ? `Applied ${plan.appliedAt ? new Date(plan.appliedAt).toLocaleDateString() : ''}`
+                        : `Applies ${shortDate(plan.periodStart)}`}
+                    </td>
                     <td style={{ display: 'flex', gap: 'var(--space-2)' }}>
                       <button type="button" className="btn btn-ghost" onClick={() => viewPdf(plan.planId)} disabled={planPdf.isPending}>
                         View PDF
